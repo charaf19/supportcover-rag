@@ -94,6 +94,45 @@ class AblationsConfig:
 
 
 @dataclass(slots=True)
+class RobustnessConfig:
+    models: list[str] = field(default_factory=list)
+    supportcover_final_variant: str = "no_redundancy"
+
+
+@dataclass(slots=True)
+class ErrorAnalysisConfig:
+    frozen_setup_config: str = "configs/phase6_model_robustness.yaml"
+    output_dir: str = "./outputs/error_analysis"
+    canonical_method: str = "supportcover_final"
+    comparator_method: str = "relevance_only"
+    source_runs: dict[str, str] = field(default_factory=dict)
+    canonical_sample_size: int = 30
+    comparison_sample_size: int = 10
+    representative_examples: int = 5
+    taxonomy: list[str] = field(
+        default_factory=lambda: [
+            "support_missing",
+            "support_present_answer_wrong",
+            "formatting_mismatch",
+            "hallucination",
+            "multi_hop_reasoning_failure",
+            "insufficient_evidence_forced_answer",
+            "other",
+        ]
+    )
+
+
+@dataclass(slots=True)
+class SystemsSummaryConfig:
+    frozen_setup_config: str = "configs/phase6_model_robustness.yaml"
+    output_dir: str = "./outputs/systems"
+    comparator_method: str = "relevance_only"
+    canonical_method: str = "supportcover_final"
+    source_runs: dict[str, str] = field(default_factory=dict)
+    figure_artifact_name: str = "phase8_latency_breakdown.csv"
+
+
+@dataclass(slots=True)
 class EvaluationConfig:
     metrics: list[str] = field(default_factory=lambda: [
         "answer_em",
@@ -119,6 +158,9 @@ class AppConfig:
     generation: GenerationConfig = field(default_factory=GenerationConfig)
     experiments: ExperimentsConfig = field(default_factory=ExperimentsConfig)
     ablations: AblationsConfig = field(default_factory=AblationsConfig)
+    robustness: RobustnessConfig = field(default_factory=RobustnessConfig)
+    error_analysis: ErrorAnalysisConfig = field(default_factory=ErrorAnalysisConfig)
+    systems_summary: SystemsSummaryConfig = field(default_factory=SystemsSummaryConfig)
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
 
 
@@ -133,6 +175,9 @@ _DEF_TYPE_MAP = {
     "generation": GenerationConfig,
     "experiments": ExperimentsConfig,
     "ablations": AblationsConfig,
+    "robustness": RobustnessConfig,
+    "error_analysis": ErrorAnalysisConfig,
+    "systems_summary": SystemsSummaryConfig,
     "evaluation": EvaluationConfig,
 }
 

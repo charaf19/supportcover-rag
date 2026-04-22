@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import http.client
 import json
 import logging
@@ -127,6 +128,9 @@ class BaseGenerator:
     def _generate_one(self, prompt_input: PromptInput) -> GenerationResult:
         raise NotImplementedError
 
+    def close(self) -> None:
+        return None
+
 
 class EchoGenerator(BaseGenerator):
     def _generate_one(self, prompt_input: PromptInput) -> GenerationResult:
@@ -180,6 +184,21 @@ class TransformersGenerator(BaseGenerator):
             self.batch_size,
             self.gpu_acceleration_active,
         )
+
+    def close(self) -> None:
+        model = getattr(self, "model", None)
+        if model is not None:
+            del model
+            self.model = None
+        tokenizer = getattr(self, "tokenizer", None)
+        if tokenizer is not None:
+            del tokenizer
+            self.tokenizer = None
+        gc.collect()
+        if hasattr(self._torch, "xpu") and self._torch.xpu.is_available():
+            self._torch.xpu.empty_cache()
+        if hasattr(self._torch, "cuda") and self._torch.cuda.is_available():
+            self._torch.cuda.empty_cache()
 
     def _load_model_with_dtype(self, config: GenerationConfig, auto_model_cls: type[object]) -> tuple[object, object]:
         requested_dtype = (config.dtype or "auto").lower()
@@ -403,6 +422,9 @@ class OllamaGenerator(BaseGenerator):
         if not isinstance(generated_tokens, int):
             generated_tokens = whitespace_token_estimate(cleaned_text)
         return GenerationResult(text=cleaned_text, generated_tokens=max(0, generated_tokens))
+
+    def close(self) -> None:
+        self.client.close()
 
 
 def build_generator(config: GenerationConfig, prompting: PromptingConfig) -> BaseGenerator:

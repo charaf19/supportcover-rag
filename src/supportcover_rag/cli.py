@@ -8,9 +8,11 @@ import typer
 
 from supportcover_rag.config import AppConfig, load_config
 from supportcover_rag.data import acquire_hotpotqa, preprocess_raw_split
+from supportcover_rag.error_analysis import run_error_analysis as generate_error_analysis
 from supportcover_rag.experiment_outputs import ExperimentFamily, VALID_EXPERIMENT_FAMILIES, parse_experiment_family
 from supportcover_rag.logging_utils import configure_logging
 from supportcover_rag.pipeline import ExperimentRunner, SUPPORTED_METHODS
+from supportcover_rag.systems_summary import run_systems_summary as generate_systems_summary
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 LOGGER = logging.getLogger(__name__)
@@ -250,3 +252,60 @@ def run_ablations(
         experiment_id=experiment_id,
     )
     LOGGER.info("Ablation suite complete.")
+
+
+@app.command("run-robustness")
+def run_robustness(
+    config: str = typer.Option(..., help="Path to YAML config."),
+    split: str | None = typer.Option(None, help="Data split to run. Defaults to experiments.split from the config."),
+    device: str | None = typer.Option(None, help="Override generation device: auto, xpu, cpu, cuda, or mps."),
+    dtype: str | None = typer.Option(None, help="Override generation dtype: auto, float32, or float16."),
+    limit: int | None = typer.Option(None, min=1, help="Limit the number of processed examples at runtime."),
+    batch_size: int | None = typer.Option(None, min=1, help="Override generation.batch_size."),
+    notes: str = typer.Option("", help="Optional notes recorded in the experiment registry."),
+) -> None:
+    _, cfg = _load_app_config(
+        config,
+        device=device,
+        dtype=dtype,
+        limit=limit,
+        batch_size=batch_size,
+    )
+    resolved_split = _resolve_split(split, cfg)
+    split_path = Path(cfg.paths.data_root) / "processed" / f"{resolved_split}.jsonl"
+    ExperimentRunner.run_robustness_study(
+        cfg,
+        split_path=split_path,
+        split_name=resolved_split,
+        notes=notes,
+    )
+    LOGGER.info("Robustness suite complete.")
+
+
+@app.command("run-error-analysis")
+def run_error_analysis(
+    config: str = typer.Option(..., help="Path to YAML config."),
+) -> None:
+    _, cfg = _load_app_config(config)
+    artifacts = generate_error_analysis(cfg)
+    LOGGER.info(
+        "Error analysis complete | annotations=%s | summary=%s | analysis=%s",
+        artifacts["annotation_path"],
+        artifacts["summary_path"],
+        artifacts["analysis_path"],
+    )
+
+
+@app.command("run-systems-summary")
+def run_systems_summary(
+    config: str = typer.Option(..., help="Path to YAML config."),
+) -> None:
+    _, cfg = _load_app_config(config)
+    artifacts = generate_systems_summary(cfg)
+    LOGGER.info(
+        "Systems summary complete | summary_csv=%s | summary_md=%s | analysis=%s | latency_breakdown=%s",
+        artifacts["summary_csv_path"],
+        artifacts["summary_md_path"],
+        artifacts["analysis_path"],
+        artifacts["latency_breakdown_path"],
+    )

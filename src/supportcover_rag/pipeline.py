@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import psutil
@@ -32,7 +32,7 @@ from supportcover_rag.retrieval import BM25ParagraphRetriever
 from supportcover_rag.types import HotpotExample, PackedEvidence, PredictionRecord
 
 LOGGER = logging.getLogger(__name__)
-SUPPORTED_METHODS = ("no_rag", "paragraph_topk", "relevance_only", "random_sentence", "supportcover")
+SUPPORTED_METHODS = ("no_rag", "paragraph_topk", "relevance_only", "random_sentence", "supportcover", "supportcover_final")
 
 
 @dataclass(slots=True)
@@ -57,6 +57,15 @@ class ExperimentRunner:
         self.token_counter = build_token_counter(config.generation)
         self.process = psutil.Process()
         self.output_manager = ExperimentOutputManager(config.paths.output_root)
+
+    def close(self) -> None:
+        generator = getattr(self, "generator", None)
+        if generator is None:
+            return
+        close_generator = getattr(generator, "close", None)
+        if callable(close_generator):
+            close_generator()
+        self.generator = None
 
     def _write_suite_summary(
         self,
@@ -111,6 +120,10 @@ class ExperimentRunner:
                 packed = pack_random(candidates, token_budget=token_budget, seed=self.config.seed)
             elif method == "supportcover":
                 selector = apply_variant(SupportCoverSelector(self.config.supportcover), variant=variant)
+                packed = selector.select(candidates, token_budget=token_budget)
+            elif method == "supportcover_final":
+                canonical_variant = self.config.robustness.supportcover_final_variant
+                selector = apply_variant(SupportCoverSelector(self.config.supportcover), variant=canonical_variant)
                 packed = selector.select(candidates, token_budget=token_budget)
             else:
                 raise ValueError(f"Unsupported method: {method}")
@@ -463,6 +476,67 @@ class ExperimentRunner:
             LOGGER.info("Wrote comparison summary: %s", summary_path)
         return summaries
 
+    def run_robustness_suite(
+        self,
+        split_path: str | Path,
+        split_name: str,
+        *,
+        notes: str = "",
+    ) -> list[dict[str, float | int | str]]:
+        return self.run_robustness_study(
+            self.config,
+            split_path=split_path,
+            split_name=split_name,
+            notes=notes,
+        )
+
+    @classmethod
+    def run_robustness_study(
+        cls,
+        config: AppConfig,
+        split_path: str | Path,
+        split_name: str,
+        *,
+        notes: str = "",
+    ) -> list[dict[str, float | int | str]]:
+        models = list(config.robustness.models)
+        if len(models) < 2:
+            raise ValueError("Configure at least two models for the robustness study.")
+        if len(models) > 3:
+            raise ValueError("Robustness study supports at most three models.")
+
+        summaries: list[dict[str, float | int | str]] = []
+        for model_name in models:
+            model_config = replace(
+                config,
+                generation=replace(config.generation, model_name_or_path=model_name),
+            )
+            model_runner = cls(model_config)
+            try:
+                model_notes = merge_notes(notes, f"supportcover_final={config.robustness.supportcover_final_variant}")
+                for method, variant in (("relevance_only", "full"), ("supportcover_final", "final")):
+                    summaries.append(
+                        model_runner.run_single(
+                            split_path=split_path,
+                            split_name=split_name,
+                            method=method,
+                            token_budget=model_config.supportcover.token_budget,
+                            retrieval_depth=model_config.retrieval.top_k_paragraphs,
+                            variant=variant,
+                            family=ExperimentFamily.ROBUSTNESS,
+                            notes=model_notes,
+                        )
+                    )
+            finally:
+                model_runner.close()
+
+        summary_path = Path(config.paths.output_root) / ExperimentFamily.ROBUSTNESS.value / (
+            f"{summaries[0]['experiment_id']}_{summaries[-1]['experiment_id']}_comparison.csv"
+        )
+        write_csv(summary_path, summaries)
+        LOGGER.info("Wrote comparison summary: %s", summary_path)
+        return summaries
+
     def _build_ablation_plan(
         self,
         family: ExperimentFamily | None,
@@ -473,14 +547,22 @@ class ExperimentRunner:
             )
 
         plans: list[tuple[ExperimentFamily, str, int, int, str]] = []
+        budget_methods = [method for method in self.config.experiments.methods if method in {"relevance_only", "supportcover"}]
+        if not budget_methods:
+            budget_methods = ["supportcover"]
+        depth_methods = [method for method in self.config.experiments.methods if method in {"relevance_only", "supportcover"}]
+        if not depth_methods:
+            depth_methods = ["supportcover"]
 
         def add_budget_runs(target_family: ExperimentFamily) -> None:
             for budget in self.config.ablations.token_budgets:
-                plans.append((target_family, "supportcover", budget, self.config.retrieval.top_k_paragraphs, "full"))
+                for method in budget_methods:
+                    plans.append((target_family, method, budget, self.config.retrieval.top_k_paragraphs, "full"))
 
         def add_depth_runs(target_family: ExperimentFamily) -> None:
             for depth in self.config.ablations.retrieval_depths:
-                plans.append((target_family, "supportcover", self.config.supportcover.token_budget, depth, "full"))
+                for method in depth_methods:
+                    plans.append((target_family, method, self.config.supportcover.token_budget, depth, "full"))
 
         def add_component_runs(target_family: ExperimentFamily) -> None:
             for variant in self.config.ablations.variants:
@@ -541,4 +623,8 @@ class ExperimentRunner:
                 experiment_id=experiment_id,
             )
             results.append(metrics)
+        if family is not None:
+            summary_path = self._write_suite_summary(family=family, summaries=results)
+            if summary_path is not None:
+                LOGGER.info("Wrote comparison summary: %s", summary_path)
         return results
