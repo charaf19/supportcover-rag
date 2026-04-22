@@ -1,0 +1,9 @@
+datasets>=2.20.0
+PyYAML>=6.0.1
+typer>=0.12.3
+transformers>=4.51.0
+numpy>=1.26.4
+psutil>=5.9.8
+
+[dev]
+pytest>=8.3.2

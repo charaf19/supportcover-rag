@@ -1,0 +1,72 @@
+seed: 42
+
+paths:
+  data_root: ./data
+  output_root: ./outputs
+
+logging:
+  level: INFO
+
+runtime:
+  limit: 32
+  overwrite: false
+
+raw_data:
+  dataset_path: hotpotqa/hotpot_qa
+  dataset_config: distractor
+  splits: [validation]
+
+retrieval:
+  method: bm25
+  top_k_paragraphs: 5
+  bm25_k1: 1.5
+  bm25_b: 0.75
+
+supportcover:
+  token_budget: 160
+  stop_threshold: 0.0
+  alpha_relevance: 1.0
+  beta_coverage: 1.2
+  gamma_redundancy: 0.6
+  delta_token_cost: 0.15
+  title_bonus: 0.3
+
+prompting:
+  include_titles: true
+  allow_abstain: true
+  system_instruction: >
+    Answer using only the provided evidence.
+    If the evidence is insufficient, output exactly: insufficient evidence.
+  user_instruction: >
+    Return only the short final answer. Do not explain.
+
+generation:
+  backend: transformers
+  model_name_or_path: Qwen/Qwen3-4B-Instruct-2507
+  device: auto
+  dtype: auto
+  batch_size: 4
+  temperature: 0.0
+  max_new_tokens: 12
+  do_sample: false
+  trust_remote_code: false
+
+experiments:
+  split: validation
+  methods:
+    - paragraph_topk
+    - relevance_only
+    - supportcover
+
+evaluation:
+  metrics:
+    - answer_em
+    - answer_f1
+    - support_em
+    - support_f1
+    - coverage_at_budget
+    - evidence_tokens
+    - retrieval_latency_ms
+    - packing_latency_ms
+    - generation_latency_ms
+    - total_latency_ms

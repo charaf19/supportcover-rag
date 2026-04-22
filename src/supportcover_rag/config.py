@@ -1,0 +1,153 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+
+@dataclass(slots=True)
+class PathsConfig:
+    data_root: str = "./data"
+    output_root: str = "./outputs"
+
+
+@dataclass(slots=True)
+class LoggingConfig:
+    level: str = "INFO"
+
+
+@dataclass(slots=True)
+class RuntimeConfig:
+    limit: int | None = None
+    overwrite: bool = False
+
+
+@dataclass(slots=True)
+class RawDataConfig:
+    dataset_path: str = "hotpotqa/hotpot_qa"
+    dataset_config: str = "distractor"
+    splits: list[str] = field(default_factory=lambda: ["train", "validation"])
+
+
+@dataclass(slots=True)
+class RetrievalConfig:
+    method: str = "bm25"
+    top_k_paragraphs: int = 5
+    bm25_k1: float = 1.5
+    bm25_b: float = 0.75
+
+
+@dataclass(slots=True)
+class SupportCoverConfig:
+    token_budget: int = 160
+    stop_threshold: float = 0.0
+    alpha_relevance: float = 1.0
+    beta_coverage: float = 1.2
+    gamma_redundancy: float = 0.6
+    delta_token_cost: float = 0.15
+    title_bonus: float = 0.3
+
+
+@dataclass(slots=True)
+class PromptingConfig:
+    include_titles: bool = True
+    allow_abstain: bool = True
+    system_instruction: str = (
+        "Answer using only the provided evidence. "
+        "If the evidence is insufficient, output exactly: insufficient evidence."
+    )
+    user_instruction: str = "Return only the short final answer. Do not explain."
+
+
+@dataclass(slots=True)
+class GenerationConfig:
+    backend: str = "transformers"
+    model_name_or_path: str = "Qwen/Qwen3-4B-Instruct-2507"
+    base_url: str = "http://localhost:11434"
+    timeout_seconds: float = 120.0
+    think: bool = False
+    stream: bool = False
+    device: str = "auto"
+    dtype: str = "auto"
+    batch_size: int = 4
+    temperature: float = 0.0
+    max_new_tokens: int = 12
+    do_sample: bool = False
+    trust_remote_code: bool = False
+
+
+@dataclass(slots=True)
+class ExperimentsConfig:
+    split: str = "validation"
+    methods: list[str] = field(
+        default_factory=lambda: ["no_rag", "paragraph_topk", "relevance_only", "random_sentence", "supportcover"]
+    )
+
+
+@dataclass(slots=True)
+class AblationsConfig:
+    token_budgets: list[int] = field(default_factory=lambda: [64, 96, 128, 160, 192])
+    retrieval_depths: list[int] = field(default_factory=lambda: [3, 5, 10])
+    variants: list[str] = field(default_factory=lambda: ["full", "no_coverage", "no_redundancy", "no_token_penalty", "relevance_only"])
+
+
+@dataclass(slots=True)
+class EvaluationConfig:
+    metrics: list[str] = field(default_factory=lambda: [
+        "answer_em",
+        "answer_f1",
+        "support_em",
+        "support_f1",
+        "coverage_at_budget",
+        "evidence_tokens",
+        "total_latency_ms",
+    ])
+
+
+@dataclass(slots=True)
+class AppConfig:
+    seed: int = 42
+    paths: PathsConfig = field(default_factory=PathsConfig)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
+    runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
+    raw_data: RawDataConfig = field(default_factory=RawDataConfig)
+    retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
+    supportcover: SupportCoverConfig = field(default_factory=SupportCoverConfig)
+    prompting: PromptingConfig = field(default_factory=PromptingConfig)
+    generation: GenerationConfig = field(default_factory=GenerationConfig)
+    experiments: ExperimentsConfig = field(default_factory=ExperimentsConfig)
+    ablations: AblationsConfig = field(default_factory=AblationsConfig)
+    evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
+
+
+_DEF_TYPE_MAP = {
+    "paths": PathsConfig,
+    "logging": LoggingConfig,
+    "runtime": RuntimeConfig,
+    "raw_data": RawDataConfig,
+    "retrieval": RetrievalConfig,
+    "supportcover": SupportCoverConfig,
+    "prompting": PromptingConfig,
+    "generation": GenerationConfig,
+    "experiments": ExperimentsConfig,
+    "ablations": AblationsConfig,
+    "evaluation": EvaluationConfig,
+}
+
+
+def _build_nested(config_dict: dict[str, Any]) -> AppConfig:
+    kwargs: dict[str, Any] = {}
+    for key, value in config_dict.items():
+        if key in _DEF_TYPE_MAP and isinstance(value, dict):
+            kwargs[key] = _DEF_TYPE_MAP[key](**value)
+        else:
+            kwargs[key] = value
+    return AppConfig(**kwargs)
+
+
+def load_config(path: str | Path) -> AppConfig:
+    with Path(path).open("r", encoding="utf-8") as handle:
+        payload = yaml.safe_load(handle) or {}
+    return _build_nested(payload)

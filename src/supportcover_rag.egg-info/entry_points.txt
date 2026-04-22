@@ -1,0 +1,2 @@
+[console_scripts]
+supportcover-rag = supportcover_rag.cli:app

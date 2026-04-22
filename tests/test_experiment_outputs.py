@@ -1,0 +1,137 @@
+from __future__ import annotations
+
+import csv
+import json
+from pathlib import Path
+
+import pytest
+import yaml
+
+from supportcover_rag.config import AppConfig, ExperimentsConfig, GenerationConfig, PathsConfig, RuntimeConfig
+from supportcover_rag.experiment_outputs import (
+    ExperimentFamily,
+    build_run_folder_name,
+    resolve_model_alias,
+    resolve_split_alias,
+    validate_experiment_id,
+)
+from supportcover_rag.logging_utils import configure_logging
+from supportcover_rag.pipeline import ExperimentRunner
+
+
+def test_output_naming_helpers_use_short_aliases() -> None:
+    assert resolve_model_alias("Qwen/Qwen3-4B-Instruct-2507") == "qwen"
+    assert resolve_model_alias("google/gemma-2-2b-it") == "gemma"
+    assert resolve_split_alias("validation") == "val"
+    assert (
+        build_run_folder_name(
+            experiment_id="EXP031",
+            method="supportcover",
+            model_alias="qwen",
+            split="val",
+            token_budget=160,
+            retrieval_depth=5,
+            variant="no_coverage",
+        )
+        == "EXP031_supportcover_qwen_val_b160_d5_no_coverage"
+    )
+
+
+def test_validate_experiment_id_enforces_debug_prefix() -> None:
+    with pytest.raises(ValueError, match="Debug runs must use DBG ids"):
+        validate_experiment_id("EXP001", ExperimentFamily.DEBUG)
+
+    with pytest.raises(ValueError, match="Paper-grade runs must use EXP ids"):
+        validate_experiment_id("DBG001", ExperimentFamily.BASELINE)
+
+
+def test_runner_writes_new_output_layout_and_registry(tmp_path: Path) -> None:
+    configure_logging("INFO")
+
+    processed_dir = tmp_path / "data" / "processed"
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    split_path = processed_dir / "validation.jsonl"
+    example = {
+        "id": "ex-1",
+        "question": "Who wrote Hamlet?",
+        "answer": "William Shakespeare",
+        "type": "bridge",
+        "level": "easy",
+        "context": [
+            {"title": "Hamlet", "sentences": ["Hamlet is a tragedy written by William Shakespeare."]},
+            {"title": "Macbeth", "sentences": ["Macbeth is another play by Shakespeare."]},
+        ],
+        "supporting_facts": [{"title": "Hamlet", "sent_id": 0}],
+    }
+    split_path.write_text(json.dumps(example) + "\n", encoding="utf-8")
+
+    config = AppConfig(
+        paths=PathsConfig(data_root=str(tmp_path / "data"), output_root=str(tmp_path / "outputs")),
+        runtime=RuntimeConfig(limit=1, overwrite=False),
+        generation=GenerationConfig(
+            backend="echo",
+            model_name_or_path="Qwen/Qwen3-4B-Instruct-2507",
+            batch_size=1,
+        ),
+        experiments=ExperimentsConfig(methods=["relevance_only"]),
+    )
+    runner = ExperimentRunner(config)
+
+    baseline = runner.run_single(
+        split_path=split_path,
+        split_name="validation",
+        method="relevance_only",
+        token_budget=160,
+        retrieval_depth=5,
+        family=ExperimentFamily.BASELINE,
+        notes="baseline smoke",
+    )
+    debug = runner.run_single(
+        split_path=split_path,
+        split_name="validation",
+        method="supportcover",
+        token_budget=160,
+        retrieval_depth=5,
+        family=ExperimentFamily.DEBUG,
+        notes="debug smoke",
+    )
+
+    baseline_dir = Path(str(baseline["output_dir"]))
+    debug_dir = Path(str(debug["output_dir"]))
+
+    assert baseline["experiment_id"] == "EXP001"
+    assert baseline_dir.name == "EXP001_relevance_only_qwen_val_b160_d5_full"
+    assert debug["experiment_id"] == "DBG001"
+    assert debug_dir.name == "DBG001_supportcover_qwen_val_b160_d5_full"
+
+    for run_dir in (baseline_dir, debug_dir):
+        assert (run_dir / "config.resolved.yaml").exists()
+        assert (run_dir / "metrics.json").exists()
+        assert (run_dir / "predictions.jsonl").exists()
+        assert (run_dir / "summary.csv").exists()
+        assert (run_dir / "run.log").exists()
+
+    resolved_config = yaml.safe_load((baseline_dir / "config.resolved.yaml").read_text(encoding="utf-8"))
+    assert resolved_config["run"]["experiment_id"] == "EXP001"
+    assert resolved_config["run"]["family"] == "baseline"
+    assert resolved_config["run"]["model_alias"] == "qwen"
+
+    registry_path = tmp_path / "outputs" / "registry" / "experiments.csv"
+    latest_path = tmp_path / "outputs" / "registry" / "latest.json"
+    with registry_path.open("r", encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+
+    assert len(rows) == 2
+    assert rows[0]["experiment_id"] == "EXP001"
+    assert rows[0]["family"] == "baseline"
+    assert rows[0]["status"] == "completed"
+    assert rows[0]["method"] == "relevance_only"
+    assert rows[0]["model"] == "qwen"
+    assert rows[0]["split"] == "val"
+    assert rows[0]["notes"] == "baseline smoke"
+    assert rows[1]["experiment_id"] == "DBG001"
+    assert rows[1]["family"] == "debug"
+
+    latest = json.loads(latest_path.read_text(encoding="utf-8"))
+    assert latest["experiment_id"] == "DBG001"
+    assert latest["family"] == "debug"

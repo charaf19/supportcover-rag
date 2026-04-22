@@ -1,0 +1,162 @@
+Metadata-Version: 2.4
+Name: supportcover-rag
+Version: 0.1.0
+Summary: Lightweight post-retrieval support-coverage packing for on-device multi-hop QA
+Author: OpenAI
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: datasets>=2.20.0
+Requires-Dist: PyYAML>=6.0.1
+Requires-Dist: typer>=0.12.3
+Requires-Dist: transformers>=4.44.0
+Requires-Dist: numpy>=1.26.4
+Requires-Dist: psutil>=5.9.8
+Provides-Extra: dev
+Requires-Dist: pytest>=8.3.2; extra == "dev"
+
+# SupportCover-RAG
+
+SupportCover-RAG is a compact, research-oriented codebase for **budgeted support-coverage compression** in **on-device multi-hop question answering** with small language models.
+
+The repository is intentionally small and focused. It covers the full experiment loop without bloating the project:
+
+- data acquisition from **HotpotQA (distractor)**
+- preprocessing into a clean JSONL format
+- paragraph retrieval with a lightweight **BM25** retriever
+- sentence candidate construction
+- **SupportCover** sentence packing under a token budget
+- small-model generation through `transformers`
+- answer, support, and system evaluation
+- ablation sweeps over budgets, retrieval depth, and scoring components
+
+## What the repository implements
+
+The contribution lives **after retrieval and before generation**.
+
+Given a question and a set of retrieved paragraphs, the code:
+
+1. splits paragraphs into sentence candidates
+2. scores each candidate for:
+   - question relevance
+   - marginal support coverage
+   - redundancy with already selected evidence
+   - token cost
+3. greedily packs the highest-value evidence under a strict token budget
+4. sends only the packed evidence to a local small language model
+
+## Repository layout
+
+```text
+supportcover-rag/
+├── configs/
+│   └── default.yaml
+├── src/supportcover_rag/
+│   ├── __init__.py
+│   ├── __main__.py
+│   ├── cli.py
+│   ├── config.py
+│   ├── data.py
+│   ├── evaluation.py
+│   ├── generation.py
+│   ├── io_utils.py
+│   ├── logging_utils.py
+│   ├── packing.py
+│   ├── pipeline.py
+│   ├── retrieval.py
+│   ├── text.py
+│   └── types.py
+└── tests/
+    ├── test_evaluation.py
+    └── test_packing.py
+```
+
+## Installation
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .
+```
+
+For tests:
+
+```bash
+pip install -e .[dev]
+pytest
+```
+
+Install PyTorch separately for your environment before running generation. For Intel Arc / XPU, use the official PyTorch XPU wheel for your OS and Python 3.11 environment.
+
+## Quick start
+
+### 1. Acquire HotpotQA distractor
+
+```bash
+supportcover-rag acquire-data --config configs/default.yaml
+```
+
+### 2. Preprocess raw data
+
+```bash
+supportcover-rag preprocess --config configs/default.yaml
+```
+
+### 3. Run the main experiment
+
+```bash
+supportcover-rag run --config configs/default.yaml --split validation
+```
+
+### 4. Run ablations
+
+```bash
+supportcover-rag run-ablations --config configs/default.yaml --split validation
+```
+
+## Main methods implemented
+
+- `no_rag`
+- `paragraph_topk`
+- `relevance_only`
+- `random_sentence`
+- `supportcover`
+
+## Outputs
+
+Each run writes to a dedicated experiment directory:
+
+- `predictions.jsonl` – per-example outputs and timings
+- `metrics.json` – aggregate metrics
+- `summary.csv` – one-line run summary
+
+The ablation command also writes:
+
+- `ablation_summary.csv`
+
+## Notes on scope
+
+- The repository is designed for the **HotpotQA distractor setting**.
+- Retrieval is intentionally lightweight and performed over the **10 provided context paragraphs per example**.
+- The code uses `transformers` for local generation. Choose a small model in the config for actual on-device testing.
+- Support evaluation is computed from the selected evidence pack, not from an independently generated rationale.
+
+## Running on Intel Arc / XPU
+
+The default config uses `generation.device: auto`, which prefers `xpu`, then `cuda`, then `mps`, then `cpu`. You can force Intel Arc execution from the CLI:
+
+```bash
+supportcover-rag run --config configs/default.yaml --split validation --device xpu --dtype auto
+```
+
+Startup logs report the selected model, device, dtype, and whether GPU acceleration is active. If `xpu` is requested but unavailable, the run fails fast with a clear error. Make sure the correct PyTorch XPU build is installed separately for your local OS before using `--device xpu`.
+
+## Suggested small models
+
+The config intentionally leaves model choice open. Reasonable starting points are small instruct models that can run locally, depending on your hardware budget.
+
+## Reproducibility guidelines
+
+- freeze the config before the main validation run
+- keep prompt wording fixed across methods
+- keep generation decoding deterministic for the main comparison
+- do not tune on the validation set once the evaluation protocol is locked
