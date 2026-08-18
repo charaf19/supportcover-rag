@@ -83,9 +83,12 @@ class ExperimentContext:
     notes: str
     timestamp: str
     output_dir: Path
+    config_sha256: str | None = None
+    code_revision: str | None = None
+    split_sha256: str | None = None
 
     def run_metadata(self) -> dict[str, Any]:
-        return {
+        metadata: dict[str, Any] = {
             "experiment_id": self.experiment_id,
             "family": self.family.value,
             "method": self.method,
@@ -99,6 +102,13 @@ class ExperimentContext:
             "timestamp": self.timestamp,
             "output_dir": str(self.output_dir),
         }
+        optional_metadata = {
+            "config_sha256": self.config_sha256,
+            "code_revision": self.code_revision,
+            "split_sha256": self.split_sha256,
+        }
+        metadata.update({key: value for key, value in optional_metadata.items() if value is not None})
+        return metadata
 
 
 def parse_experiment_family(
@@ -206,6 +216,9 @@ class ExperimentOutputManager:
         variant: str,
         notes: str = "",
         experiment_id: str | None = None,
+        config_sha256: str | None = None,
+        code_revision: str | None = None,
+        split_sha256: str | None = None,
     ) -> ExperimentContext:
         self.ensure_layout()
 
@@ -241,6 +254,9 @@ class ExperimentOutputManager:
             notes=notes.strip(),
             timestamp=datetime.now(timezone.utc).isoformat(),
             output_dir=output_dir,
+            config_sha256=config_sha256,
+            code_revision=code_revision,
+            split_sha256=split_sha256,
         )
 
     def next_id(self, family: ExperimentFamily) -> str:

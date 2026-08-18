@@ -20,6 +20,14 @@ def _normalize_scores(scores: list[float]) -> list[float]:
     return [(score - min_score) / (max_score - min_score) for score in scores]
 
 
+def _base_relevance(candidate: SentenceCandidate) -> float:
+    return (
+        0.55 * candidate.raw_features.get("query_overlap", 0.0)
+        + 0.35 * candidate.raw_features.get("paragraph_score_norm", 0.0)
+        + 0.10 * candidate.raw_features.get("title_overlap", 0.0)
+    )
+
+
 def build_sentence_candidates(
     question: str,
     retrieved_paragraphs: list[RetrievedParagraph],
@@ -71,11 +79,7 @@ class SupportCoverSelector:
         selected_terms = set().union(*(item.candidate.sentence_terms for item in selected)) if selected else set()
         selected_titles = {item.candidate.title for item in selected}
 
-        relevance = (
-            0.55 * candidate.raw_features.get("query_overlap", 0.0)
-            + 0.35 * candidate.raw_features.get("paragraph_score_norm", 0.0)
-            + 0.10 * candidate.raw_features.get("title_overlap", 0.0)
-        )
+        relevance = _base_relevance(candidate)
         newly_covered_terms = candidate.sentence_terms & candidate.question_terms - selected_terms
         coverage_gain = len(newly_covered_terms) / max(len(candidate.question_terms), 1)
         title_gain = 1.0 if candidate.title not in selected_titles else 0.0
@@ -130,6 +134,8 @@ def pack_paragraphs(
     token_counter: TokenCounter,
 ) -> PackedEvidence:
     candidates: list[SelectedSentence] = []
+    explicit_support_keys: list[tuple[str, int]] = []
+    seen_support_keys: set[tuple[str, int]] = set()
     used_tokens = 0
     for paragraph in retrieved_paragraphs:
         paragraph_text = " ".join(paragraph.sentences)
@@ -149,8 +155,18 @@ def pack_paragraphs(
             raw_features={"query_overlap": 0.0, "title_overlap": 0.0, "paragraph_score_norm": 1.0},
         )
         candidates.append(SelectedSentence(candidate=pseudo_candidate, score=paragraph.score, contributions={}))
+        for sentence_id in range(len(paragraph.sentences)):
+            support_key = (paragraph.title, sentence_id)
+            if support_key not in seen_support_keys:
+                explicit_support_keys.append(support_key)
+                seen_support_keys.add(support_key)
         used_tokens += paragraph_tokens
-    return PackedEvidence(method="paragraph_topk", selected=candidates, token_budget=token_budget)
+    return PackedEvidence(
+        method="paragraph_topk",
+        selected=candidates,
+        token_budget=token_budget,
+        explicit_support_keys=explicit_support_keys,
+    )
 
 
 def pack_relevance_only(candidates: list[SentenceCandidate], token_budget: int) -> PackedEvidence:
@@ -173,6 +189,94 @@ def pack_relevance_only(candidates: list[SentenceCandidate], token_budget: int) 
     return PackedEvidence(method="relevance_only", selected=selected, token_budget=token_budget)
 
 
+def pack_mmr(
+    candidates: list[SentenceCandidate],
+    token_budget: int,
+    lambda_relevance: float,
+) -> PackedEvidence:
+    if not 0.0 <= lambda_relevance <= 1.0:
+        raise ValueError("lambda_relevance must be between 0 and 1.")
+
+    remaining = list(candidates)
+    selected: list[SelectedSentence] = []
+    used_tokens = 0
+    while remaining:
+        feasible = [candidate for candidate in remaining if used_tokens + candidate.token_count <= token_budget]
+        if not feasible:
+            break
+
+        scored: list[tuple[SentenceCandidate, float, float, float]] = []
+        for candidate in feasible:
+            relevance = _base_relevance(candidate)
+            max_similarity = max(
+                (
+                    jaccard_similarity(candidate.sentence_terms, item.candidate.sentence_terms)
+                    for item in selected
+                ),
+                default=0.0,
+            )
+            score = lambda_relevance * relevance - (1.0 - lambda_relevance) * max_similarity
+            scored.append((candidate, score, relevance, max_similarity))
+
+        best_candidate, best_score, relevance, max_similarity = max(scored, key=lambda item: item[1])
+        selected.append(
+            SelectedSentence(
+                candidate=best_candidate,
+                score=best_score,
+                contributions={
+                    "relevance": relevance,
+                    "max_similarity_to_selected": max_similarity,
+                },
+            )
+        )
+        used_tokens += best_candidate.token_count
+        remaining = [candidate for candidate in remaining if candidate.support_key != best_candidate.support_key]
+
+    return PackedEvidence(method="mmr_sentence", selected=selected, token_budget=token_budget)
+
+
+def pack_greedy_query_cover(
+    candidates: list[SentenceCandidate],
+    token_budget: int,
+) -> PackedEvidence:
+    if any(candidate.token_count <= 0 for candidate in candidates):
+        raise ValueError("Greedy query-cover candidates must have a positive token cost.")
+
+    remaining = list(candidates)
+    selected: list[SelectedSentence] = []
+    covered_question_terms: set[str] = set()
+    used_tokens = 0
+    while remaining:
+        feasible = [candidate for candidate in remaining if used_tokens + candidate.token_count <= token_budget]
+        if not feasible:
+            break
+
+        scored: list[tuple[SentenceCandidate, float, set[str]]] = []
+        for candidate in feasible:
+            newly_covered_terms = (candidate.sentence_terms & candidate.question_terms) - covered_question_terms
+            score = len(newly_covered_terms) / candidate.token_count
+            scored.append((candidate, score, newly_covered_terms))
+
+        best_candidate, best_score, newly_covered_terms = max(scored, key=lambda item: item[1])
+        if not newly_covered_terms:
+            break
+        selected.append(
+            SelectedSentence(
+                candidate=best_candidate,
+                score=best_score,
+                contributions={
+                    "new_query_terms": float(len(newly_covered_terms)),
+                    "coverage_per_token": best_score,
+                },
+            )
+        )
+        covered_question_terms.update(newly_covered_terms)
+        used_tokens += best_candidate.token_count
+        remaining = [candidate for candidate in remaining if candidate.support_key != best_candidate.support_key]
+
+    return PackedEvidence(method="greedy_query_cover", selected=selected, token_budget=token_budget)
+
+
 def pack_random(candidates: list[SentenceCandidate], token_budget: int, seed: int) -> PackedEvidence:
     rng = random.Random(seed)
     shuffled = list(candidates)
@@ -191,6 +295,10 @@ def apply_variant(selector: SupportCoverSelector, variant: str) -> SupportCoverS
     if variant == "full":
         return selector
     cfg = selector.config
+    if variant == "no_query_coverage":
+        return SupportCoverSelector(replace(cfg, beta_coverage=0.0))
+    if variant == "no_title_gain":
+        return SupportCoverSelector(replace(cfg, title_bonus=0.0))
     if variant == "no_coverage":
         return SupportCoverSelector(replace(cfg, beta_coverage=0.0, title_bonus=0.0))
     if variant == "no_redundancy":

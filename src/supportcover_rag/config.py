@@ -22,6 +22,14 @@ class LoggingConfig:
 class RuntimeConfig:
     limit: int | None = None
     overwrite: bool = False
+    resume: bool = False
+
+
+@dataclass(slots=True)
+class FreezeConfig:
+    manifest_file: str = ""
+    sha256: str | None = None
+    require_sha256: bool = False
 
 
 @dataclass(slots=True)
@@ -32,11 +40,19 @@ class RawDataConfig:
 
 
 @dataclass(slots=True)
+class SplitConfig:
+    ids_file: str = ""
+    role: str = ""
+    stratify_by: str | None = None
+
+
+@dataclass(slots=True)
 class RetrievalConfig:
     method: str = "bm25"
     top_k_paragraphs: int = 5
     bm25_k1: float = 1.5
     bm25_b: float = 0.75
+    mmr_lambda_relevance: float = 0.5
 
 
 @dataclass(slots=True)
@@ -90,7 +106,24 @@ class ExperimentsConfig:
 class AblationsConfig:
     token_budgets: list[int] = field(default_factory=lambda: [64, 96, 128, 160, 192])
     retrieval_depths: list[int] = field(default_factory=lambda: [3, 5, 10])
-    variants: list[str] = field(default_factory=lambda: ["full", "no_coverage", "no_redundancy", "no_token_penalty", "relevance_only"])
+    variants: list[str] = field(
+        default_factory=lambda: [
+            "full",
+            "relevance_only",
+            "no_query_coverage",
+            "no_title_gain",
+            "no_redundancy",
+            "no_token_penalty",
+        ]
+    )
+
+
+@dataclass(slots=True)
+class SensitivityConfig:
+    beta: list[float] = field(default_factory=lambda: [0.3, 0.6, 1.2, 1.8, 2.4])
+    title: list[float] = field(default_factory=lambda: [0.0, 0.15, 0.30, 0.45, 0.60])
+    delta: list[float] = field(default_factory=lambda: [0.0, 0.075, 0.15, 0.225, 0.30])
+    gamma: list[float] = field(default_factory=lambda: [0.0, 0.15, 0.30, 0.60, 0.90])
 
 
 @dataclass(slots=True)
@@ -151,13 +184,16 @@ class AppConfig:
     paths: PathsConfig = field(default_factory=PathsConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
+    freeze: FreezeConfig = field(default_factory=FreezeConfig)
     raw_data: RawDataConfig = field(default_factory=RawDataConfig)
+    split: SplitConfig = field(default_factory=SplitConfig)
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
     supportcover: SupportCoverConfig = field(default_factory=SupportCoverConfig)
     prompting: PromptingConfig = field(default_factory=PromptingConfig)
     generation: GenerationConfig = field(default_factory=GenerationConfig)
     experiments: ExperimentsConfig = field(default_factory=ExperimentsConfig)
     ablations: AblationsConfig = field(default_factory=AblationsConfig)
+    sensitivity: SensitivityConfig = field(default_factory=SensitivityConfig)
     robustness: RobustnessConfig = field(default_factory=RobustnessConfig)
     error_analysis: ErrorAnalysisConfig = field(default_factory=ErrorAnalysisConfig)
     systems_summary: SystemsSummaryConfig = field(default_factory=SystemsSummaryConfig)
@@ -168,13 +204,16 @@ _DEF_TYPE_MAP = {
     "paths": PathsConfig,
     "logging": LoggingConfig,
     "runtime": RuntimeConfig,
+    "freeze": FreezeConfig,
     "raw_data": RawDataConfig,
+    "split": SplitConfig,
     "retrieval": RetrievalConfig,
     "supportcover": SupportCoverConfig,
     "prompting": PromptingConfig,
     "generation": GenerationConfig,
     "experiments": ExperimentsConfig,
     "ablations": AblationsConfig,
+    "sensitivity": SensitivityConfig,
     "robustness": RobustnessConfig,
     "error_analysis": ErrorAnalysisConfig,
     "systems_summary": SystemsSummaryConfig,

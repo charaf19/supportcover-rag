@@ -1,0 +1,65 @@
+seed: 42
+
+runtime:
+  limit: null
+  overwrite: false
+  resume: false
+
+freeze:
+  manifest_file: ./configs/frozen/final_manifest.json
+  sha256: null
+  require_sha256: true
+
+split:
+  ids_file: ./data/splits/final_ids.json
+  role: final
+  stratify_by: null
+
+raw_data:
+  dataset_path: hotpotqa/hotpot_qa
+  dataset_config: distractor
+  splits: [validation]
+
+retrieval:
+  method: bm25
+  top_k_paragraphs: null  # Resolve from the same frozen manifest as final_main.yaml.
+  bm25_k1: 1.5
+  bm25_b: 0.75
+  mmr_lambda_relevance: null  # Resolve from the same frozen manifest as final_main.yaml.
+
+supportcover:
+  token_budget: 160
+
+prompting:
+  include_titles: true
+  allow_abstain: true
+  system_instruction: >
+    Answer using only the provided evidence.
+    If the evidence is insufficient, output exactly: insufficient evidence.
+  user_instruction: >
+    Return only the short final answer. Do not explain.
+
+generation:
+  backend: transformers
+  model_name_or_path: Qwen/Qwen3-4B-Instruct-2507
+  think: false
+  stream: false
+  device: auto
+  dtype: auto
+  batch_size: 4
+  temperature: 0.0
+  max_new_tokens: 12
+  do_sample: false
+  trust_remote_code: false
+
+experiments:
+  split: final
+  methods:
+    - relevance_only
+    - mmr_sentence
+    - supportcover_final
+
+ablations:
+  token_budgets: [96, 128, 160, 192]
+  retrieval_depths: []
+  variants: []

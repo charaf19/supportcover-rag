@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 from supportcover_rag.io_utils import read_jsonl, write_jsonl, ensure_dir
+from supportcover_rag.splits import validate_unique_ids
 from supportcover_rag.types import HotpotExample, Paragraph
 
 LOGGER = logging.getLogger(__name__)
@@ -60,26 +61,47 @@ def preprocess_raw_split(raw_path: str | Path, processed_path: str | Path, limit
     LOGGER.info("Preprocessed %d records from %s to %s", len(normalized), raw_path, processed_path)
 
 
+def _hotpot_example_from_row(row: dict[str, Any]) -> HotpotExample:
+    paragraphs = [Paragraph(title=paragraph["title"], sentences=list(paragraph["sentences"])) for paragraph in row["context"]]
+    supporting_facts = [(fact["title"], int(fact["sent_id"])) for fact in row["supporting_facts"]]
+    return HotpotExample(
+        example_id=row["id"],
+        question=row["question"],
+        answer=row["answer"],
+        qtype=row["type"],
+        level=row["level"],
+        context=paragraphs,
+        supporting_facts=supporting_facts,
+    )
+
+
 def load_examples(processed_path: str | Path, limit: int | None = None) -> list[HotpotExample]:
     rows = read_jsonl(processed_path)
     examples: list[HotpotExample] = []
     for index, row in enumerate(rows):
         if limit is not None and index >= limit:
             break
-        paragraphs = [Paragraph(title=paragraph["title"], sentences=list(paragraph["sentences"])) for paragraph in row["context"]]
-        supporting_facts = [(fact["title"], int(fact["sent_id"])) for fact in row["supporting_facts"]]
-        examples.append(
-            HotpotExample(
-                example_id=row["id"],
-                question=row["question"],
-                answer=row["answer"],
-                qtype=row["type"],
-                level=row["level"],
-                context=paragraphs,
-                supporting_facts=supporting_facts,
-            )
-        )
+        examples.append(_hotpot_example_from_row(row))
     return examples
+
+
+def load_examples_by_ids(processed_path: str | Path, ids: Iterable[str]) -> list[HotpotExample]:
+    requested_ids = list(ids)
+    validate_unique_ids(requested_ids)
+
+    rows_by_id: dict[str, dict[str, Any]] = {}
+    for row in read_jsonl(processed_path):
+        row_id = row.get("id")
+        if not isinstance(row_id, str):
+            raise ValueError("Every processed example must contain a string ID.")
+        if row_id in rows_by_id:
+            raise ValueError(f"Duplicate ID in processed examples: {row_id}")
+        rows_by_id[row_id] = row
+
+    missing_ids = [item_id for item_id in requested_ids if item_id not in rows_by_id]
+    if missing_ids:
+        raise ValueError(f"Requested IDs not found in processed examples: {', '.join(missing_ids)}")
+    return [_hotpot_example_from_row(rows_by_id[item_id]) for item_id in requested_ids]
 
 
 def validate_processed_rows(rows: Iterable[dict]) -> None:

@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Baseline Manifest",
+  "type": "object",
+  "required": [
+    "repository_commit",
+    "created_at",
+    "configs",
+    "result_artifacts",
+    "dataset",
+    "split_definition",
+    "model",
+    "prompt_settings",
+    "decoding_settings",
+    "hardware_note",
+    "notes"
+  ],
+  "properties": {
+    "repository_commit": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "format": "date-time" },
+    "configs": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "result_artifacts": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "dataset": { "type": "object" },
+    "split_definition": { "type": "object" },
+    "model": { "type": "object" },
+    "prompt_settings": { "type": "object" },
+    "decoding_settings": { "type": "object" },
+    "hardware_note": { "type": "string" },
+    "notes": { "type": "string" }
+  },
+  "additionalProperties": true
+}

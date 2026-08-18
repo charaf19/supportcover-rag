@@ -67,6 +67,7 @@ class PackedEvidence:
     method: str
     selected: list[SelectedSentence]
     token_budget: int
+    explicit_support_keys: list[SupportKey] | None = None
 
     @property
     def used_tokens(self) -> int:
@@ -74,6 +75,8 @@ class PackedEvidence:
 
     @property
     def support_keys(self) -> list[SupportKey]:
+        if self.explicit_support_keys is not None:
+            return list(self.explicit_support_keys)
         return [item.candidate.support_key for item in self.selected]
 
     def render(self, include_titles: bool = True) -> str:

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import random
 import re
 from collections import Counter, defaultdict, deque
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -9,6 +11,7 @@ import yaml
 
 from supportcover_rag.config import AppConfig
 from supportcover_rag.io_utils import ensure_dir, read_jsonl, write_csv
+from supportcover_rag.statistics import align_records_by_example_id
 from supportcover_rag.text import informative_term_set, jaccard_similarity, normalize_answer
 
 ABSTAIN_ANSWER = "insufficient evidence"
@@ -397,6 +400,67 @@ def _select_representative_examples(
             if len(selected) >= limit:
                 break
     return selected
+
+
+def _blinded_evidence(record: Mapping[str, object], example_id: str) -> str:
+    metadata = record.get("metadata")
+    if not isinstance(metadata, Mapping):
+        raise ValueError(f"Prediction {example_id} is missing metadata required for blinded evidence review.")
+    evidence = metadata.get("evidence_text")
+    if not isinstance(evidence, str):
+        raise ValueError(f"Prediction {example_id} is missing string metadata.evidence_text.")
+    return evidence
+
+
+def _required_blinded_field(record: Mapping[str, object], field: str, example_id: str) -> object:
+    if field not in record:
+        raise ValueError(f"Prediction {example_id} is missing required field '{field}'.")
+    return record[field]
+
+
+def build_blinded_annotation_records(
+    comparator_predictions: Sequence[Mapping[str, object]],
+    supportcover_predictions: Sequence[Mapping[str, object]],
+    *,
+    seed: int,
+) -> list[dict[str, object]]:
+    """Build reproducibly randomized A/B rows without exposing system identity."""
+    aligned = align_records_by_example_id(comparator_predictions, supportcover_predictions)
+    rng = random.Random(seed)
+    annotations: list[dict[str, object]] = []
+    for comparator_record, supportcover_record in aligned:
+        example_id = str(comparator_record["example_id"])
+        for field in ("question", "gold_answer", "gold_supporting_facts"):
+            comparator_value = _required_blinded_field(comparator_record, field, example_id)
+            supportcover_value = _required_blinded_field(supportcover_record, field, example_id)
+            if comparator_value != supportcover_value:
+                raise ValueError(f"Prediction metadata mismatch for example {example_id}: {field}")
+
+        _required_blinded_field(comparator_record, "predicted_answer", example_id)
+        _required_blinded_field(supportcover_record, "predicted_answer", example_id)
+
+        if rng.getrandbits(1):
+            record_a, record_b = supportcover_record, comparator_record
+        else:
+            record_a, record_b = comparator_record, supportcover_record
+        annotations.append(
+            {
+                "example_id": example_id,
+                "question": _required_blinded_field(comparator_record, "question", example_id),
+                "gold_answer": _required_blinded_field(comparator_record, "gold_answer", example_id),
+                "gold_support": _required_blinded_field(comparator_record, "gold_supporting_facts", example_id),
+                "evidence_a": _blinded_evidence(record_a, example_id),
+                "evidence_b": _blinded_evidence(record_b, example_id),
+                "prediction_a": _required_blinded_field(record_a, "predicted_answer", example_id),
+                "prediction_b": _required_blinded_field(record_b, "predicted_answer", example_id),
+                "preferred_evidence": "",
+                "preferred_prediction": "",
+                "error_category_a": "",
+                "error_category_b": "",
+                "annotator_notes": "",
+            }
+        )
+    return annotations
 
 
 def _render_analysis_markdown(

@@ -1,0 +1,16 @@
+# DEVELOPMENT-ONLY: never use this configuration with final or test IDs.
+split:
+  ids_file: ./data/splits/development_ids.json
+  role: development
+  stratify_by: type
+
+experiments:
+  split: validation
+  methods:
+    - supportcover
+
+sensitivity:
+  beta: [0.3, 0.6, 1.2, 1.8, 2.4]
+  title: [0, 0.15, 0.30, 0.45, 0.60]
+  delta: [0, 0.075, 0.15, 0.225, 0.30]
+  gamma: [0, 0.15, 0.30, 0.60, 0.90]

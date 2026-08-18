@@ -4,11 +4,12 @@ import logging
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any
 
 import psutil
 
 from supportcover_rag.config import AppConfig
-from supportcover_rag.data import load_examples
+from supportcover_rag.data import load_examples, load_examples_by_ids
 from supportcover_rag.device import elapsed_time_ms
 from supportcover_rag.evaluation import aggregate_records, coverage_at_budget, exact_match_score, f1_score, support_metrics
 from supportcover_rag.experiment_outputs import (
@@ -17,22 +18,36 @@ from supportcover_rag.experiment_outputs import (
     ExperimentOutputManager,
     merge_notes,
 )
+from supportcover_rag.external_baselines import EvidenceCompressor
 from supportcover_rag.generation import PromptInput, build_generator, build_token_counter
-from supportcover_rag.io_utils import append_jsonl_rows, ensure_dir, write_csv, write_json
+from supportcover_rag.io_utils import append_jsonl_rows, ensure_dir, read_jsonl, write_csv, write_json
 from supportcover_rag.logging_utils import attach_run_log
 from supportcover_rag.packing import (
     SupportCoverSelector,
     apply_variant,
     build_sentence_candidates,
+    pack_greedy_query_cover,
+    pack_mmr,
     pack_paragraphs,
     pack_random,
     pack_relevance_only,
 )
 from supportcover_rag.retrieval import BM25ParagraphRetriever
+from supportcover_rag.splits import load_json_ids, ordered_ids_sha256, validate_unique_ids
 from supportcover_rag.types import HotpotExample, PackedEvidence, PredictionRecord
 
 LOGGER = logging.getLogger(__name__)
-SUPPORTED_METHODS = ("no_rag", "paragraph_topk", "relevance_only", "random_sentence", "supportcover", "supportcover_final")
+SUPPORTED_METHODS = (
+    "no_rag",
+    "paragraph_topk",
+    "relevance_only",
+    "random_sentence",
+    "mmr_sentence",
+    "greedy_query_cover",
+    "external_compressor",
+    "supportcover",
+    "supportcover_final",
+)
 
 
 @dataclass(slots=True)
@@ -46,8 +61,9 @@ class PreparedPrediction:
 
 
 class ExperimentRunner:
-    def __init__(self, config: AppConfig) -> None:
+    def __init__(self, config: AppConfig, *, external_compressor: EvidenceCompressor | None = None) -> None:
         self.config = config
+        self.external_compressor = external_compressor
         self.retriever = BM25ParagraphRetriever(
             k1=config.retrieval.bm25_k1,
             b=config.retrieval.bm25_b,
@@ -98,7 +114,22 @@ class ExperimentRunner:
         retrieval_latency_ms = (time.perf_counter() - retrieval_start) * 1000.0
 
         packing_start = time.perf_counter()
-        if method == "no_rag":
+        if method == "external_compressor":
+            if self.external_compressor is None:
+                raise RuntimeError("The external_compressor method requires an injected EvidenceCompressor adapter.")
+            candidates = []
+            packed = self.external_compressor.compress(
+                question=example.question,
+                retrieved_paragraphs=retrieved,
+                token_budget=token_budget,
+            )
+            if not isinstance(packed, PackedEvidence):
+                raise TypeError("EvidenceCompressor.compress() must return PackedEvidence.")
+            if packed.used_tokens > token_budget:
+                raise ValueError(
+                    f"External compressor exceeded the token budget: {packed.used_tokens} > {token_budget}."
+                )
+        elif method == "no_rag":
             packed = PackedEvidence(method=method, selected=[], token_budget=token_budget)
             candidates = []
         else:
@@ -118,6 +149,14 @@ class ExperimentRunner:
                 packed = pack_relevance_only(candidates, token_budget=token_budget)
             elif method == "random_sentence":
                 packed = pack_random(candidates, token_budget=token_budget, seed=self.config.seed)
+            elif method == "mmr_sentence":
+                packed = pack_mmr(
+                    candidates,
+                    token_budget=token_budget,
+                    lambda_relevance=self.config.retrieval.mmr_lambda_relevance,
+                )
+            elif method == "greedy_query_cover":
+                packed = pack_greedy_query_cover(candidates, token_budget=token_budget)
             elif method == "supportcover":
                 selector = apply_variant(SupportCoverSelector(self.config.supportcover), variant=variant)
                 packed = selector.select(candidates, token_budget=token_budget)
@@ -298,6 +337,50 @@ class ExperimentRunner:
             "notes": notes,
         }
 
+    def _configured_explicit_ids(self) -> tuple[list[str] | None, str | None]:
+        role = self.config.split.role.strip().lower()
+        if role == "final" and self.config.runtime.limit is not None:
+            raise ValueError("runtime.limit must be null for a final split.")
+
+        ids_file = self.config.split.ids_file.strip()
+        if not ids_file:
+            if role == "final":
+                raise ValueError("A split.ids_file is required when split.role is 'final'.")
+            return None, None
+
+        ids = load_json_ids(ids_file)
+        return ids, ordered_ids_sha256(ids)
+
+    def _resolved_frozen_config_sha256(self, supplied_sha256: str | None) -> str | None:
+        configured_sha256 = self.config.freeze.sha256
+        supplied = supplied_sha256.strip().lower() if supplied_sha256 else None
+        configured = configured_sha256.strip().lower() if configured_sha256 else None
+        if supplied and configured and supplied != configured:
+            raise ValueError("Supplied config SHA256 does not match freeze.sha256.")
+
+        resolved = supplied or configured
+        if resolved is not None and (len(resolved) != 64 or any(char not in "0123456789abcdef" for char in resolved)):
+            raise ValueError("Frozen config SHA256 must contain exactly 64 hexadecimal characters.")
+
+        role = self.config.split.role.strip().lower()
+        if role in {"final", "test"} and self.config.freeze.require_sha256 and resolved is None:
+            raise ValueError(
+                f"Split role '{role}' requires an explicitly supplied frozen config SHA256."
+            )
+        return resolved
+
+    def _validate_tuning_role(self, operation: str) -> None:
+        role = self.config.split.role.strip().lower()
+        if role in {"final", "test"}:
+            raise ValueError(f"{operation} cannot use split role '{role}'.")
+
+    @staticmethod
+    def _prediction_record_from_row(row: dict[str, Any], row_number: int) -> PredictionRecord:
+        try:
+            return PredictionRecord(**row)
+        except TypeError as exc:
+            raise ValueError(f"Malformed prediction record at row {row_number}: {exc}") from exc
+
     def _execute_run(
         self,
         split_path: str | Path,
@@ -306,25 +389,75 @@ class ExperimentRunner:
         token_budget: int,
         retrieval_depth: int,
         variant: str = "full",
+        explicit_ids: list[str] | None = None,
     ) -> dict[str, float | int | str]:
         if method not in SUPPORTED_METHODS:
             supported = ", ".join(SUPPORTED_METHODS)
             raise ValueError(f"Unsupported method '{method}'. Expected one of: {supported}.")
 
-        examples = load_examples(split_path, limit=self.config.runtime.limit)
+        if explicit_ids is None:
+            explicit_ids, _ = self._configured_explicit_ids()
+        elif self.config.split.role.strip().lower() == "final" and self.config.runtime.limit is not None:
+            raise ValueError("runtime.limit must be null for a final split.")
+
+        if explicit_ids is None:
+            examples = load_examples(split_path, limit=self.config.runtime.limit)
+        else:
+            examples = load_examples_by_ids(split_path, explicit_ids)
+
         target_dir = ensure_dir(output_dir)
         predictions_path = target_dir / "predictions.jsonl"
         records: list[PredictionRecord] = []
+        records_by_id: dict[str, PredictionRecord] = {}
+        expected_ids = [example.example_id for example in examples]
+        completed_ids: set[str] = set()
 
-        if predictions_path.exists() and not self.config.runtime.overwrite:
-            raise FileExistsError(f"{predictions_path} already exists. Set runtime.overwrite=true or choose a new output directory.")
-        if predictions_path.exists():
-            predictions_path.unlink()
+        if self.config.runtime.resume:
+            validate_unique_ids(expected_ids)
+            if predictions_path.exists():
+                expected_id_set = set(expected_ids)
+                for row_number, row in enumerate(read_jsonl(predictions_path), start=1):
+                    example_id = row.get("example_id")
+                    if not isinstance(example_id, str):
+                        raise ValueError(f"Prediction row {row_number} is missing a string example_id.")
+                    if example_id in records_by_id:
+                        raise ValueError(f"Duplicate example ID in existing predictions: {example_id}")
+                    if example_id not in expected_id_set:
+                        raise ValueError(f"Unexpected example ID in existing predictions: {example_id}")
+                    record = self._prediction_record_from_row(row, row_number)
+                    if record.method != method:
+                        raise ValueError(
+                            f"Existing prediction for {example_id} uses method '{record.method}', expected '{method}'."
+                        )
+                    if record.token_budget != token_budget:
+                        raise ValueError(
+                            f"Existing prediction for {example_id} uses token budget {record.token_budget}, "
+                            f"expected {token_budget}."
+                        )
+                    records.append(record)
+                    records_by_id[example_id] = record
+                completed_ids = set(records_by_id)
+        else:
+            if predictions_path.exists() and not self.config.runtime.overwrite:
+                raise FileExistsError(
+                    f"{predictions_path} already exists. Set runtime.overwrite=true or choose a new output directory."
+                )
+            if predictions_path.exists():
+                predictions_path.unlink()
+
+        examples_to_run = [example for example in examples if example.example_id not in completed_ids]
+        if completed_ids:
+            LOGGER.info(
+                "Resuming %s with %d/%d examples already completed.",
+                method,
+                len(completed_ids),
+                len(examples),
+            )
 
         LOGGER.info(
             "Running %s on %d examples | budget=%d | retrieval_depth=%d | variant=%s | batch_size=%d",
             method,
-            len(examples),
+            len(examples_to_run),
             token_budget,
             retrieval_depth,
             variant,
@@ -332,12 +465,12 @@ class ExperimentRunner:
         )
 
         prepared_batch: list[PreparedPrediction] = []
-        processed = 0
-        last_logged = 0
+        processed = len(completed_ids)
+        last_logged = processed
         progress_interval = max(self.batch_size * 5, 25)
         started_at = time.perf_counter()
 
-        for example in examples:
+        for example in examples_to_run:
             prepared_batch.append(
                 self._prepare_prediction(
                     example=example,
@@ -356,6 +489,7 @@ class ExperimentRunner:
                 token_budget=token_budget,
             )
             records.extend(batch_records)
+            records_by_id.update((record.example_id, record) for record in batch_records)
             append_jsonl_rows(predictions_path, [record.to_dict() for record in batch_records])
             processed += len(batch_records)
             if processed <= self.batch_size or processed == len(examples) or processed - last_logged >= progress_interval:
@@ -370,9 +504,28 @@ class ExperimentRunner:
                 token_budget=token_budget,
             )
             records.extend(batch_records)
+            records_by_id.update((record.example_id, record) for record in batch_records)
             append_jsonl_rows(predictions_path, [record.to_dict() for record in batch_records])
             processed += len(batch_records)
             self._log_progress(method=method, processed=processed, total=len(examples), started_at=started_at)
+
+        if self.config.runtime.resume:
+            actual_ids = set(records_by_id)
+            expected_id_set = set(expected_ids)
+            missing_ids = [item_id for item_id in expected_ids if item_id not in actual_ids]
+            unexpected_ids = sorted(actual_ids - expected_id_set)
+            if missing_ids or unexpected_ids or len(records_by_id) != len(expected_ids):
+                problems: list[str] = []
+                if missing_ids:
+                    problems.append(f"missing IDs: {', '.join(missing_ids)}")
+                if unexpected_ids:
+                    problems.append(f"unexpected IDs: {', '.join(unexpected_ids)}")
+                if len(records_by_id) != len(expected_ids):
+                    problems.append(
+                        f"record count {len(records_by_id)} does not match expected count {len(expected_ids)}"
+                    )
+                raise RuntimeError("Resume produced an invalid logical prediction set: " + "; ".join(problems))
+            records = [records_by_id[item_id] for item_id in expected_ids]
 
         return aggregate_records(records)
 
@@ -387,7 +540,11 @@ class ExperimentRunner:
         family: ExperimentFamily = ExperimentFamily.MAIN,
         notes: str = "",
         experiment_id: str | None = None,
+        config_sha256: str | None = None,
+        code_revision: str | None = None,
     ) -> dict[str, float | int | str]:
+        explicit_ids, split_sha256 = self._configured_explicit_ids()
+        resolved_config_sha256 = self._resolved_frozen_config_sha256(config_sha256)
         context = self.output_manager.prepare_run(
             config=self.config,
             family=family,
@@ -398,6 +555,9 @@ class ExperimentRunner:
             variant=variant,
             notes=notes,
             experiment_id=experiment_id,
+            config_sha256=resolved_config_sha256,
+            code_revision=code_revision,
+            split_sha256=split_sha256,
         )
         target_dir = ensure_dir(context.output_dir)
         self.output_manager.write_config_snapshot(target_dir / "config.resolved.yaml", self.config, context)
@@ -423,6 +583,7 @@ class ExperimentRunner:
                     token_budget=token_budget,
                     retrieval_depth=retrieval_depth,
                     variant=variant,
+                    explicit_ids=explicit_ids,
                 )
                 payload = self._build_run_payload(context, metrics, status="completed", notes=context.notes)
                 write_json(target_dir / "metrics.json", payload)
@@ -454,6 +615,8 @@ class ExperimentRunner:
         family: ExperimentFamily = ExperimentFamily.MAIN,
         notes: str = "",
         experiment_id: str | None = None,
+        config_sha256: str | None = None,
+        code_revision: str | None = None,
     ) -> list[dict[str, float | int | str]]:
         if experiment_id is not None and len(self.config.experiments.methods) != 1:
             raise ValueError("Use --experiment-id only when the command will produce exactly one run.")
@@ -469,6 +632,8 @@ class ExperimentRunner:
                 family=family,
                 notes=notes,
                 experiment_id=experiment_id,
+                config_sha256=config_sha256,
+                code_revision=code_revision,
             )
             summaries.append(metrics)
         summary_path = self._write_suite_summary(family=family, summaries=summaries)
@@ -482,12 +647,16 @@ class ExperimentRunner:
         split_name: str,
         *,
         notes: str = "",
+        config_sha256: str | None = None,
+        code_revision: str | None = None,
     ) -> list[dict[str, float | int | str]]:
         return self.run_robustness_study(
             self.config,
             split_path=split_path,
             split_name=split_name,
             notes=notes,
+            config_sha256=config_sha256,
+            code_revision=code_revision,
         )
 
     @classmethod
@@ -498,6 +667,8 @@ class ExperimentRunner:
         split_name: str,
         *,
         notes: str = "",
+        config_sha256: str | None = None,
+        code_revision: str | None = None,
     ) -> list[dict[str, float | int | str]]:
         models = list(config.robustness.models)
         if len(models) < 2:
@@ -525,6 +696,8 @@ class ExperimentRunner:
                             variant=variant,
                             family=ExperimentFamily.ROBUSTNESS,
                             notes=model_notes,
+                            config_sha256=config_sha256,
+                            code_revision=code_revision,
                         )
                     )
             finally:
@@ -547,7 +720,11 @@ class ExperimentRunner:
             )
 
         plans: list[tuple[ExperimentFamily, str, int, int, str]] = []
-        budget_methods = [method for method in self.config.experiments.methods if method in {"relevance_only", "supportcover"}]
+        budget_methods = [
+            method
+            for method in self.config.experiments.methods
+            if method in {"relevance_only", "mmr_sentence", "supportcover", "supportcover_final"}
+        ]
         if not budget_methods:
             budget_methods = ["supportcover"]
         depth_methods = [method for method in self.config.experiments.methods if method in {"relevance_only", "supportcover"}]
@@ -604,7 +781,11 @@ class ExperimentRunner:
         family: ExperimentFamily | None = None,
         notes: str = "",
         experiment_id: str | None = None,
+        config_sha256: str | None = None,
+        code_revision: str | None = None,
     ) -> list[dict[str, float | int | str]]:
+        if family is not ExperimentFamily.ABLATION_BUDGET:
+            self._validate_tuning_role("Tuning/ablation execution")
         plans = self._build_ablation_plan(family)
         if experiment_id is not None and len(plans) != 1:
             raise ValueError("Use --experiment-id only when the command will produce exactly one run.")
@@ -621,6 +802,8 @@ class ExperimentRunner:
                 family=plan_family,
                 notes=notes,
                 experiment_id=experiment_id,
+                config_sha256=config_sha256,
+                code_revision=code_revision,
             )
             results.append(metrics)
         if family is not None:
