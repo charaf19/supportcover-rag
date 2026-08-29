@@ -1,6 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Baseline Manifest",
+  "$id": "https://supportcover-rag.local/schemas/baseline_manifest.schema.json",
+  "title": "SupportCover-RAG baseline manifest",
+  "description": "Records immutable repository, protocol, and artifact provenance without asserting unavailable scientific values.",
   "type": "object",
   "required": [
     "repository_commit",
@@ -13,18 +15,23 @@
     "prompt_settings",
     "decoding_settings",
     "hardware_note",
-    "notes"
+    "notes",
+    "codebase_audit_reference",
+    "commands_reference"
   ],
   "properties": {
-    "repository_commit": { "type": "string", "minLength": 1 },
+    "repository_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{7,64}$"
+    },
     "created_at": { "type": "string", "format": "date-time" },
     "configs": {
       "type": "array",
-      "items": { "type": "string", "minLength": 1 }
+      "items": { "$ref": "#/$defs/fileReference" }
     },
     "result_artifacts": {
       "type": "array",
-      "items": { "type": "string", "minLength": 1 }
+      "items": { "$ref": "#/$defs/artifactReference" }
     },
     "dataset": { "type": "object" },
     "split_definition": { "type": "object" },
@@ -32,7 +39,56 @@
     "prompt_settings": { "type": "object" },
     "decoding_settings": { "type": "object" },
     "hardware_note": { "type": "string" },
-    "notes": { "type": "string" }
+    "notes": { "type": "string" },
+    "codebase_audit_reference": { "$ref": "#/$defs/fileReference" },
+    "commands_reference": { "$ref": "#/$defs/fileReference" }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "fileReference": {
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        {
+          "type": "object",
+          "required": ["path"],
+          "properties": {
+            "path": { "type": "string", "minLength": 1 },
+            "sha256": { "$ref": "#/$defs/sha256" },
+            "notes": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "artifactReference": {
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        {
+          "type": "object",
+          "required": ["path", "complete", "historical_evidence_status"],
+          "properties": {
+            "path": { "type": "string", "minLength": 1 },
+            "sha256": { "$ref": "#/$defs/sha256" },
+            "config": { "$ref": "#/$defs/fileReference" },
+            "dataset": { "type": "object" },
+            "split_definition": { "type": "object" },
+            "model": { "type": "object" },
+            "generation_settings": { "type": "object" },
+            "code_revision": { "type": ["string", "null"] },
+            "complete": { "type": "boolean" },
+            "historical_evidence_status": {
+              "type": "string",
+              "enum": ["usable", "incomplete", "unverified", "not_scientific_evidence"]
+            },
+            "notes": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
   },
   "additionalProperties": true
 }

@@ -45,6 +45,50 @@ def test_validate_experiment_id_enforces_debug_prefix() -> None:
         validate_experiment_id("DBG001", ExperimentFamily.BASELINE)
 
 
+def test_optional_provenance_is_persisted_without_changing_legacy_payloads(tmp_path: Path) -> None:
+    config = AppConfig(
+        paths=PathsConfig(output_root=str(tmp_path / "outputs")),
+        generation=GenerationConfig(backend="echo"),
+    )
+    runner = ExperimentRunner(config)
+    context = runner.output_manager.prepare_run(
+        config=config,
+        family=ExperimentFamily.DEBUG,
+        method="relevance_only",
+        split_name="validation",
+        token_budget=160,
+        retrieval_depth=5,
+        variant="full",
+        config_sha256="a" * 64,
+        code_revision="79e2d4c1e3233c94a9a0faf80be770596a0bc72b",
+        split_sha256="b" * 64,
+    )
+
+    payload = runner._build_run_payload(context, {"num_examples": 1}, status="completed", notes="")
+    assert payload["config_sha256"] == "a" * 64
+    assert payload["code_revision"] == "79e2d4c1e3233c94a9a0faf80be770596a0bc72b"
+    assert payload["split_sha256"] == "b" * 64
+
+    legacy_context = runner.output_manager.prepare_run(
+        config=config,
+        family=ExperimentFamily.DEBUG,
+        method="supportcover",
+        split_name="validation",
+        token_budget=160,
+        retrieval_depth=5,
+        variant="full",
+    )
+    legacy_payload = runner._build_run_payload(
+        legacy_context,
+        {"num_examples": 1},
+        status="completed",
+        notes="",
+    )
+    assert "config_sha256" not in legacy_payload
+    assert "code_revision" not in legacy_payload
+    assert "split_sha256" not in legacy_payload
+
+
 def test_runner_writes_new_output_layout_and_registry(tmp_path: Path) -> None:
     configure_logging("INFO")
 

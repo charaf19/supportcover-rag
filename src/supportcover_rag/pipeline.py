@@ -307,7 +307,7 @@ class ExperimentRunner:
         data = metrics or {}
         default_count: int | str = 0 if status == "completed" else ""
         default_metric: float | str = 0.0 if status == "completed" else ""
-        return {
+        payload: dict[str, float | int | str] = {
             "experiment_id": context.experiment_id,
             "family": context.family.value,
             "timestamp": context.timestamp,
@@ -336,6 +336,15 @@ class ExperimentRunner:
             "output_dir": str(context.output_dir),
             "notes": notes,
         }
+        optional_provenance = {
+            "config_sha256": context.config_sha256,
+            "code_revision": context.code_revision,
+            "split_sha256": context.split_sha256,
+        }
+        payload.update(
+            {key: value for key, value in optional_provenance.items() if value is not None}
+        )
+        return payload
 
     def _configured_explicit_ids(self) -> tuple[list[str] | None, str | None]:
         role = self.config.split.role.strip().lower()

@@ -54,6 +54,38 @@ def select_seeded_stratified_ids(
     return [item_id for item_id in ordered_ids if item_id in selected]
 
 
+def build_record_strata(
+    records: Sequence[Mapping[str, Any]],
+    dimensions: Sequence[str],
+    *,
+    id_field: str = "id",
+) -> dict[str, str]:
+    """Build deterministic combined stratum labels from processed records."""
+    normalized_dimensions = [dimension.strip() for dimension in dimensions if dimension.strip()]
+    if len(normalized_dimensions) != len(set(normalized_dimensions)):
+        raise ValueError("Stratification dimensions must be unique.")
+    if not normalized_dimensions:
+        return {}
+
+    strata: dict[str, str] = {}
+    for index, record in enumerate(records):
+        item_id = record.get(id_field)
+        if not isinstance(item_id, str) or not item_id:
+            raise ValueError(f"Record {index} is missing a non-empty string '{id_field}'.")
+        if item_id in strata:
+            raise ValueError(f"Duplicate IDs: {item_id}")
+        missing = [dimension for dimension in normalized_dimensions if dimension not in record]
+        if missing:
+            raise ValueError(
+                f"Record {item_id} is missing stratification fields: {', '.join(missing)}"
+            )
+        values = [record[dimension] for dimension in normalized_dimensions]
+        if any(isinstance(value, (dict, list)) for value in values):
+            raise ValueError(f"Record {item_id} has a non-scalar stratification value.")
+        strata[item_id] = json.dumps(values, ensure_ascii=False, separators=(",", ":"))
+    return strata
+
+
 def load_json_ids(path: str | Path) -> list[str]:
     """Load an ID list from a JSON array or an object containing an ``ids`` array."""
     with Path(path).open("r", encoding="utf-8") as handle:
@@ -116,16 +148,30 @@ def build_split_manifest(
     ids_file: str | Path,
     role: str,
     seed: int,
-    stratify_by: str | None = None,
-) -> dict[str, str | int]:
-    """Build compact, JSON-serializable metadata for a selected split."""
-    manifest: dict[str, str | int] = {
+    stratify_by: Sequence[str] | str | None = None,
+    source_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Build a self-contained, JSON-serializable manifest for a selected split."""
+    ordered_ids = list(ids)
+    validate_unique_ids(ordered_ids)
+    normalized_role = role.strip().lower()
+    if not normalized_role:
+        raise ValueError("Split role cannot be empty.")
+    if isinstance(stratify_by, str):
+        dimensions = [stratify_by] if stratify_by.strip() else []
+    else:
+        dimensions = [dimension for dimension in (stratify_by or []) if dimension]
+
+    manifest: dict[str, Any] = {
         "ids_file": str(ids_file),
-        "role": role,
+        "role": normalized_role,
         "seed": seed,
-        "count": len(ids),
-        "split_sha256": ordered_ids_sha256(ids),
+        "count": len(ordered_ids),
+        "split_sha256": ordered_ids_sha256(ordered_ids),
+        "ids": ordered_ids,
     }
-    if stratify_by is not None:
-        manifest["stratify_by"] = stratify_by
+    if dimensions:
+        manifest["stratify_by"] = dimensions
+    if source_path is not None:
+        manifest["source_path"] = str(source_path)
     return manifest

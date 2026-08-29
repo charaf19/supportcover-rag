@@ -43,7 +43,7 @@ class RawDataConfig:
 class SplitConfig:
     ids_file: str = ""
     role: str = ""
-    stratify_by: str | None = None
+    stratify_by: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -225,7 +225,14 @@ def _build_nested(config_dict: dict[str, Any]) -> AppConfig:
     kwargs: dict[str, Any] = {}
     for key, value in config_dict.items():
         if key in _DEF_TYPE_MAP and isinstance(value, dict):
-            kwargs[key] = _DEF_TYPE_MAP[key](**value)
+            nested_value = dict(value)
+            if key == "split":
+                stratify_by = nested_value.get("stratify_by")
+                if stratify_by is None:
+                    nested_value["stratify_by"] = []
+                elif isinstance(stratify_by, str):
+                    nested_value["stratify_by"] = [stratify_by]
+            kwargs[key] = _DEF_TYPE_MAP[key](**nested_value)
         else:
             kwargs[key] = value
     return AppConfig(**kwargs)

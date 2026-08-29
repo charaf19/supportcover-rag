@@ -10,8 +10,18 @@ from supportcover_rag.config import AppConfig, load_config
 from supportcover_rag.data import acquire_hotpotqa, preprocess_raw_split
 from supportcover_rag.error_analysis import run_error_analysis as generate_error_analysis
 from supportcover_rag.experiment_outputs import ExperimentFamily, VALID_EXPERIMENT_FAMILIES, parse_experiment_family
+from supportcover_rag.io_utils import read_jsonl, write_json
 from supportcover_rag.logging_utils import configure_logging
 from supportcover_rag.pipeline import ExperimentRunner, SUPPORTED_METHODS
+from supportcover_rag.splits import (
+    build_record_strata,
+    build_split_manifest,
+    load_json_ids,
+    ordered_ids_sha256,
+    select_seeded_stratified_ids,
+    validate_disjoint_splits,
+    validate_unique_ids,
+)
 from supportcover_rag.systems_summary import run_systems_summary as generate_systems_summary
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
@@ -161,6 +171,79 @@ def preprocess(config: str = typer.Option(..., help="Path to YAML config.")) -> 
             limit=cfg.runtime.limit,
         )
     LOGGER.info("Preprocessing complete: %s", processed_dir)
+
+
+@app.command("create-split")
+def create_split(
+    processed: str = typer.Option(..., help="Path to a processed JSONL population."),
+    output: str = typer.Option(..., help="Path for the self-contained JSON split manifest."),
+    role: str = typer.Option(..., help="Scientific role, for example development or final."),
+    sample_size: int | None = typer.Option(None, min=0, help="Number of IDs; omit to select the full population."),
+    seed: int = typer.Option(42, help="Deterministic sampling seed."),
+    stratify_by: str = typer.Option("", help="Comma-separated processed-record fields, for example type,level."),
+) -> None:
+    rows = read_jsonl(processed)
+    ids: list[str] = []
+    for index, row in enumerate(rows):
+        item_id = row.get("id")
+        if not isinstance(item_id, str) or not item_id:
+            raise typer.BadParameter(f"Processed row {index} is missing a non-empty string ID.")
+        ids.append(item_id)
+    validate_unique_ids(ids)
+
+    dimensions = [dimension.strip() for dimension in stratify_by.split(",") if dimension.strip()]
+    strata = build_record_strata(rows, dimensions) if dimensions else None
+    resolved_sample_size = len(ids) if sample_size is None else sample_size
+    selected_ids = select_seeded_stratified_ids(
+        ids,
+        sample_size=resolved_sample_size,
+        seed=seed,
+        strata=strata,
+    )
+    manifest = build_split_manifest(
+        selected_ids,
+        ids_file=output,
+        role=role,
+        seed=seed,
+        stratify_by=dimensions,
+        source_path=processed,
+    )
+    write_json(output, manifest)
+    typer.echo(
+        f"Wrote {manifest['count']} {manifest['role']} IDs to {output} "
+        f"(SHA256 {manifest['split_sha256']})."
+    )
+
+
+@app.command("validate-splits")
+def validate_splits(
+    development: str = typer.Option(..., help="Path to the development split JSON."),
+    final: str = typer.Option(..., help="Path to the final split JSON."),
+    output: str | None = typer.Option(None, help="Optional path for the validation report JSON."),
+) -> None:
+    development_ids = load_json_ids(development)
+    final_ids = load_json_ids(final)
+    validate_disjoint_splits({"development": development_ids, "final": final_ids})
+    report = {
+        "status": "PASS",
+        "development": {
+            "ids_file": development,
+            "count": len(development_ids),
+            "split_sha256": ordered_ids_sha256(development_ids),
+        },
+        "final": {
+            "ids_file": final,
+            "count": len(final_ids),
+            "split_sha256": ordered_ids_sha256(final_ids),
+        },
+        "overlap_count": 0,
+    }
+    if output is not None:
+        write_json(output, report)
+    typer.echo(
+        "PASS: development and final splits are disjoint "
+        f"({len(development_ids)} development, {len(final_ids)} final IDs)."
+    )
 
 
 @app.command("run")
