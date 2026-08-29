@@ -1,9 +1,21 @@
 {
   "development_split_sha256": "0e02afdcdff360d26725abe9c197a457dcbe76c92aa54338cdc146806b9ed7c6c",
   "packing_manifest": "outputs/development/phase3/packing/packing_manifest.json",
+  "packing_manifest_sha256": null,
   "selection_rule": "Retain the untuned base and packing-level non-dominated candidates using support F1, support recall, coverage at budget, and evidence tokens; break exact metric ties by the lower numeric parameter value.",
+  "metrics_used": [
+    "support_f1",
+    "support_recall",
+    "coverage_at_budget",
+    "evidence_tokens"
+  ],
+  "base_supportcover": null,
   "supportcover_candidates": [],
+  "rejected_supportcover_candidates": [],
   "mmr_lambdas": [],
+  "rejected_mmr_lambdas": [],
   "component_ablation_base": null,
+  "component_ablation_interpretation": {},
+  "final_data_accessed": false,
   "notes": "Fill only after reviewing the complete 2,000-example packing screen. Do not use final data."
 }

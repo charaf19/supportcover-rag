@@ -14,6 +14,7 @@ from supportcover_rag.experiment_outputs import ExperimentFamily, VALID_EXPERIME
 from supportcover_rag.io_utils import read_jsonl, write_json
 from supportcover_rag.logging_utils import configure_logging
 from supportcover_rag.pipeline import ExperimentRunner, SUPPORTED_METHODS
+from supportcover_rag.paper_artifacts import export_development_paper_results, export_protocol_paper_results
 from supportcover_rag.phase3 import freeze_development_selection, run_packing_screen, validate_development_protocol
 from supportcover_rag.splits import (
     build_record_strata,
@@ -349,6 +350,72 @@ def freeze_development(
         manifest_path=manifest,
     )
     typer.echo(f"Frozen Phase-3 configuration SHA256: {frozen['config_sha256']}")
+
+
+@app.command("export-paper-development")
+def export_paper_development(
+    packing_summary: str = typer.Option(
+        "outputs/development/phase3/packing/packing_summary.csv",
+        help="Raw Phase-3 packing summary CSV.",
+    ),
+    packing_manifest: str = typer.Option(
+        "outputs/development/phase3/packing/packing_manifest.json",
+        help="Raw Phase-3 packing manifest.",
+    ),
+    shortlist: str = typer.Option(
+        "outputs/development/phase3/shortlist.json",
+        help="Recorded development shortlist.",
+    ),
+    decision: str = typer.Option(
+        "outputs/development/phase3/decision.json",
+        help="Completed development decision record.",
+    ),
+    freeze_manifest: str = typer.Option(
+        "configs/frozen/final_manifest.json",
+        help="Completed deterministic freeze manifest.",
+    ),
+    output_root: str = typer.Option("paper_results", help="Publication-only artifact root."),
+    code_revision: str | None = typer.Option(None, help="Optional source-control revision recorded as provenance."),
+) -> None:
+    artifacts = export_development_paper_results(
+        packing_summary_path=packing_summary,
+        packing_manifest_path=packing_manifest,
+        shortlist_path=shortlist,
+        decision_path=decision,
+        freeze_manifest_path=freeze_manifest,
+        output_root=output_root,
+        code_revision=code_revision,
+    )
+    typer.echo("Exported curated development artifacts: " + ", ".join(artifacts.values()))
+
+
+@app.command("export-paper-protocol")
+def export_paper_protocol(
+    split_validation: str = typer.Option(
+        "data/splits/split_validation.json",
+        help="Verified development/final split-validation report.",
+    ),
+    frozen_config: str = typer.Option("configs/final_frozen.yaml", help="Completed frozen configuration."),
+    freeze_manifest: str = typer.Option(
+        "configs/frozen/final_manifest.json",
+        help="Completed deterministic freeze manifest.",
+    ),
+    environment: str = typer.Option(
+        "outputs/development/phase3/environment.json",
+        help="Verified Phase-3 environment manifest.",
+    ),
+    output_root: str = typer.Option("paper_results", help="Publication-only artifact root."),
+    code_revision: str | None = typer.Option(None, help="Optional source-control revision recorded as provenance."),
+) -> None:
+    artifacts = export_protocol_paper_results(
+        split_validation_path=split_validation,
+        frozen_config_path=frozen_config,
+        freeze_manifest_path=freeze_manifest,
+        environment_path=environment,
+        output_root=output_root,
+        code_revision=code_revision,
+    )
+    typer.echo("Exported frozen protocol artifacts: " + ", ".join(artifacts.values()))
 
 
 @app.command("run")

@@ -347,6 +347,32 @@ git status --short
 
 The first command should find no tuning input reference; the freeze manifest may contain the final split SHA and final manifest path, but no final prediction or metric. Do not execute the frozen final config during Phase 3.
 
+### Publication-only Phase-3 export (after freeze only)
+
+`outputs/` remains the raw and operational source of truth. The following commands create only compact, derived evidence under `paper_results/`; they refuse missing/incomplete decisions and freeze artifacts. Per-example JSONL, predictions, run folders, and logs are never copied.
+
+```powershell
+$CodeRevision = git rev-parse HEAD
+.\.venv\Scripts\python.exe -m supportcover_rag export-paper-development --code-revision $CodeRevision
+.\.venv\Scripts\python.exe -m supportcover_rag export-paper-protocol --code-revision $CodeRevision
+```
+
+Expected publication outputs after a real Phase-3 freeze:
+
+```text
+paper_results/00_protocol/split_manifest.json
+paper_results/00_protocol/frozen_config.yaml
+paper_results/00_protocol/freeze_manifest.json
+paper_results/00_protocol/environment.json
+paper_results/01_development/sensitivity.csv
+paper_results/01_development/mmr_selection.csv
+paper_results/01_development/component_ablation.csv
+paper_results/01_development/development_decision.json
+paper_results/08_reproducibility/paper_artifact_manifest.json
+```
+
+Every manifest entry records source paths, source SHA-256 values, artifact SHA-256, split/config/freeze hashes, code revision when supplied, and generation timestamp. Other `paper_results/` phase directories are created only when their real evidence exists.
+
 ## Final experiments
 
 ### Main unseen study
