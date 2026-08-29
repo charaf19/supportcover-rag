@@ -180,11 +180,15 @@ def pack_relevance_only(candidates: list[SentenceCandidate], token_budget: int) 
         reverse=True,
     )
     selected: list[SelectedSentence] = []
+    selected_support_keys: set[tuple[str, int]] = set()
     used_tokens = 0
     for candidate in ranked:
+        if candidate.support_key in selected_support_keys:
+            continue
         if used_tokens + candidate.token_count > token_budget:
             continue
         selected.append(SelectedSentence(candidate=candidate, score=candidate.raw_features.get("query_overlap", 0.0), contributions={}))
+        selected_support_keys.add(candidate.support_key)
         used_tokens += candidate.token_count
     return PackedEvidence(method="relevance_only", selected=selected, token_budget=token_budget)
 

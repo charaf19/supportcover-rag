@@ -5,7 +5,7 @@ Repository revision inspected: `79e2d4c1e3233c94a9a0faf80be770596a0bc72b`
 
 ## Result artifacts
 
-No `data/`, `outputs/`, or `results/` directory exists in this checkout. No predictions, aggregate result files, experiment registry, resolved configuration, split file, environment manifest, or run log is available to hash or validate.
+At the Phase 0 inventory point, no `data/`, `outputs/`, or `results/` directory existed. Phase 1 subsequently added version-controlled split manifests while leaving raw and processed datasets ignored. No predictions, aggregate result files, experiment registry, resolved configuration, environment manifest, or run log is available to hash or validate.
 
 The paths embedded in `configs/phase7_error_analysis.yaml` and `configs/phase8_efficiency_summary.yaml` point to `EXP030` and `EXP031` runs that are absent. Those references are not evidence that the runs exist or are complete. The current checkout therefore contains no baseline result artifact that is safe to use as historical scientific evidence.
 
@@ -16,10 +16,10 @@ All hashes are SHA-256 values computed from the files as present at the revision
 | Path | SHA-256 | Status |
 | --- | --- | --- |
 | `configs/default.yaml` | `e60abfef02bcf54b1e61340c634dee2e6c646c37c42639ceb7969ed96ea3cd31` | Historical/default; contains the conflated `no_coverage` variant. |
-| `configs/final_budget.yaml` | `f1141d9fbb765f685504e58a7db155c0b5e439819360b5663a0d7f42da103919` | Planned; unresolved frozen fields and missing split/manifest. |
+| `configs/final_budget.yaml` | `f1141d9fbb765f685504e58a7db155c0b5e439819360b5663a0d7f42da103919` | Planned; final split exists, frozen settings manifest remains unresolved. |
 | `configs/final_cross_dataset.yaml` | `f8a7843c102279cf9d17ee65e93f01198d3e34591012e91ee3efbba00ec04d73` | Planned; unresolved frozen fields and missing data/split/manifest. |
 | `configs/final_main.yaml` | `bd47d757c18d648002fe4e09ac267a722c294b0a106e014c0fd68330abbe5980` | Planned; not executable as a final study yet. |
-| `configs/final_models.yaml` | `65e4927f727ff2d90b29ba6a73dd14b32bc4d153da3951c15b4ff7b2fb315e7c` | Planned; unresolved frozen fields and missing split/manifest. |
+| `configs/final_models.yaml` | `65e4927f727ff2d90b29ba6a73dd14b32bc4d153da3951c15b4ff7b2fb315e7c` | Planned; final split exists, frozen settings manifest remains unresolved. |
 | `configs/phase1_main.yaml` | `35ad22eec80c5f70f299dd9604e2707dbe876211f06421a92a4cf96b99d7aa60` | Historical first-32 validation protocol. |
 | `configs/phase2_stability_100.yaml` | `c6ace3393950f9ed30c02144a39e1454c49cb1ed04e5c11370b41c6171e19675` | Historical first-100 validation protocol. |
 | `configs/phase3_budget_ablation.yaml` | `a04d982e7d7b16a949dd5ceeffa4ea387ab9523f97e50427e5f706e9deeda323` | Historical first-100 validation protocol. |

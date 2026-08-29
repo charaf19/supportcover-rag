@@ -43,3 +43,14 @@ def test_relevance_only_remains_available() -> None:
     assert config.gamma_redundancy == 0.0
     assert config.delta_token_cost == 0.0
     assert config.alpha_relevance == SupportCoverConfig().alpha_relevance
+
+
+def test_legacy_no_coverage_variant_remains_conflated_for_historical_compatibility() -> None:
+    original = SupportCoverConfig()
+
+    legacy = apply_variant(SupportCoverSelector(original), "no_coverage").config
+
+    before = asdict(original)
+    after = asdict(legacy)
+    changed = {field for field in before if before[field] != after[field]}
+    assert changed == {"beta_coverage", "title_bonus"}

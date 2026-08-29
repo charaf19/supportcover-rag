@@ -1,0 +1,14 @@
+{
+  "status": "PASS",
+  "development": {
+    "ids_file": "data/splits/development_ids.json",
+    "count": 2000,
+    "split_sha256": "0e02afdcdff360d26725abe9c197a457dcbe76c92aa54338cdc146806b9ed7c6"
+  },
+  "final": {
+    "ids_file": "data/splits/final_ids.json",
+    "count": 7405,
+    "split_sha256": "fc5c4bbd3b2a0304803f118cc098eec9d78521ac7f769877774239f52a4ecf6c"
+  },
+  "overlap_count": 0
+}

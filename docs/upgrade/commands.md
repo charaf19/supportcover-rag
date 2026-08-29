@@ -119,11 +119,24 @@ python -m pytest tests/test_experiment_outputs.py -q
 python -m pytest
 ```
 
+### Targeted Phase 2 methods and contracts
+
+- Status: VERIFIED.
+- Working directory: repository root.
+- Inputs: synthetic candidates, paragraphs, and external-compressor doubles; no dataset or model.
+- Outputs: test report only.
+- Cost: cheap.
+- Phase availability: Phase 2 and later.
+
+```powershell
+python -m pytest tests/test_packing_baselines.py tests/test_paragraph_support.py tests/test_supportcover_ablation.py -q
+```
+
 ## Data acquisition and preprocessing
 
 ### Acquire configured HotpotQA data
 
-- Status: SUPPORTED, NOT EXECUTED.
+- Status: VERIFIED during Phase 1; do not repeat unless reconstructing the ignored local dataset.
 - Working directory: repository root.
 - Inputs: `configs/default.yaml`, network access, Hugging Face dataset availability.
 - Outputs: `data/raw/train.jsonl` and `data/raw/validation.jsonl`.
@@ -136,7 +149,7 @@ python -m supportcover_rag acquire-data --config configs/default.yaml
 
 ### Preprocess acquired data
 
-- Status: SUPPORTED, NOT EXECUTED because raw data is absent.
+- Status: VERIFIED during Phase 1.
 - Working directory: repository root.
 - Inputs: `data/raw/*.jsonl` selected by the config.
 - Outputs: `data/processed/train.jsonl` and `data/processed/validation.jsonl`.
@@ -149,37 +162,39 @@ python -m supportcover_rag preprocess --config configs/default.yaml
 
 ## Explicit scientific splits
 
-### Create a deterministic development split
+### Frozen development split creation record
 
-- Status: VERIFIED on synthetic processed data; real population not generated because `data/processed/train.jsonl` is absent.
+- Status: EXECUTED AND PERMANENTLY FROZEN. Do not rerun, resample, reshuffle, edit, or replace this manifest.
 - Working directory: repository root.
-- Inputs: processed HotpotQA training JSONL and a protocol-approved sample size.
+- Inputs: `data/processed/train.jsonl` containing 90,447 HotpotQA training examples.
 - Outputs: self-contained `data/splits/development_ids.json` containing ordered IDs, count, seed, role, stratification dimensions, and SHA-256.
 - Cost: moderate JSONL read; no model generation.
-- Phase availability: Phase 1 after the development sample size is fixed.
+- Phase availability: historical command record only; the resulting IDs are immutable.
 
 ```powershell
-python -m supportcover_rag create-split --processed data/processed/train.jsonl --output data/splits/development_ids.json --role development --sample-size <APPROVED_DEV_SIZE> --seed 42 --stratify-by type,level
+python -m supportcover_rag create-split --processed data/processed/train.jsonl --output data/splits/development_ids.json --role development --sample-size 2000 --seed 42 --stratify-by type,level
 ```
 
-`<APPROVED_DEV_SIZE>` is intentionally unresolved: selecting it changes the experimental protocol and must not be guessed after results are observed.
+Frozen protocol: HotpotQA train, N=2,000, seed 42, stratified by `type,level`, ordered-ID SHA-256 `0e02afdcdff360d26725abe9c197a457dcbe76c92aa54338cdc146806b9ed7c6`.
 
-### Create the full final validation population
+### Frozen full final population creation record
 
-- Status: VERIFIED on synthetic processed data; real population not generated because `data/processed/validation.jsonl` is absent.
+- Status: EXECUTED AND PERMANENTLY FROZEN. Do not rerun, resample, reshuffle, edit, replace, or inspect this population for tuning.
 - Working directory: repository root.
-- Inputs: processed HotpotQA validation JSONL.
+- Inputs: `data/processed/validation.jsonl` containing all 7,405 HotpotQA validation examples.
 - Outputs: self-contained `data/splits/final_ids.json` with every validation ID in source order and its SHA-256.
 - Cost: moderate JSONL read; no model generation.
-- Phase availability: Phase 1. Omitting `--sample-size` selects the full source population.
+- Phase availability: historical command record only; the resulting IDs are immutable.
 
 ```powershell
 python -m supportcover_rag create-split --processed data/processed/validation.jsonl --output data/splits/final_ids.json --role final --seed 42
 ```
 
+Frozen protocol: complete HotpotQA validation population, N=7,405, ordered-ID SHA-256 `fc5c4bbd3b2a0304803f118cc098eec9d78521ac7f769877774239f52a4ecf6c`.
+
 ### Validate isolation and hashes
 
-- Status: VERIFIED on synthetic manifests.
+- Status: VERIFIED on the real frozen manifests.
 - Working directory: repository root.
 - Inputs: development and final split manifests.
 - Outputs: `data/splits/split_validation.json` and a PASS message; overlap, duplicates, missing/malformed IDs, or embedded hash mismatches fail the command.
@@ -207,9 +222,9 @@ python -m supportcover_rag run --config configs/phase1_main.yaml --family debug
 
 ### Publication-grade development tuning
 
-- Status: BLOCKED in Phase 0.
+- Status: BLOCKED until Phase 3 infrastructure and protocol checks are complete; data and frozen development IDs are available.
 - Working directory: repository root.
-- Required inputs: deterministic development IDs drawn from HotpotQA training data, processed training data, complete sensitivity runner, model, and frozen prompt/decoding candidates.
+- Required inputs: frozen `data/splits/development_ids.json`, processed training data, complete sensitivity runner, model, and frozen prompt/decoding candidates.
 - Expected outputs: per-example development predictions, OFAT results, component ablation, MMR selection record, and a freeze manifest.
 - Cost: expensive model generation.
 - Phase availability: Phase 3 only, after Phase 1 and Phase 2 gates.
