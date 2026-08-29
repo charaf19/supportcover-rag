@@ -7,12 +7,14 @@ from pathlib import Path
 from statistics import fmean
 from typing import Any
 
+import yaml
+
 from supportcover_rag.config import AppConfig, SupportCoverConfig
 from supportcover_rag.data import load_examples_by_ids
 from supportcover_rag.evaluation import coverage_at_budget, support_metrics
 from supportcover_rag.freeze import build_frozen_manifest, canonical_sha256
 from supportcover_rag.generation import TokenCounter, build_token_counter
-from supportcover_rag.io_utils import ensure_dir, write_csv, write_json, write_jsonl, write_yaml
+from supportcover_rag.io_utils import ensure_dir, read_csv_rows, write_csv, write_json, write_jsonl, write_yaml
 from supportcover_rag.packing import SupportCoverSelector, apply_variant, build_sentence_candidates, pack_mmr
 from supportcover_rag.retrieval import BM25ParagraphRetriever
 from supportcover_rag.sensitivity import build_ofat_descriptors, validate_sensitivity_role
@@ -38,6 +40,30 @@ CANONICAL_OFAT_GRIDS = {
     "gamma": (0.0, 0.15, 0.30, 0.60, 0.90),
 }
 CANONICAL_MMR_LAMBDAS = (0.3, 0.5, 0.7, 0.9)
+DEVELOPMENT_GENERATION_COLUMNS = (
+    "config_id",
+    "method",
+    "experiment_id",
+    "alpha_relevance",
+    "beta_coverage",
+    "gamma_redundancy",
+    "delta_token_cost",
+    "title_bonus",
+    "mmr_lambda_relevance",
+    "num_examples",
+    "answer_em",
+    "answer_f1",
+    "support_f1",
+    "support_recall",
+    "coverage_at_budget",
+    "evidence_tokens",
+    "split_sha256",
+    "source_run_directory",
+    "source_summary",
+    "source_summary_sha256",
+    "source_predictions",
+    "source_predictions_sha256",
+)
 REQUIRED_EVIDENCE_ARTIFACTS = (
     "packing_screen",
     "generation_validation",
@@ -287,6 +313,136 @@ def run_packing_screen(
     }
     write_json(artifact_paths["manifest"], manifest)
     return manifest
+
+
+def _load_json_object(path: str | Path) -> dict[str, Any]:
+    with Path(path).open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, dict):
+        raise ValueError(f"Expected a JSON object: {path}")
+    return payload
+
+
+def _expected_generation_configs(shortlist: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    expected: dict[str, dict[str, Any]] = {}
+    supportcover_entries = [shortlist.get("base_supportcover"), *shortlist.get("supportcover_candidates", [])]
+    for entry in supportcover_entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("config_id"), str):
+            raise ValueError("Every retained SupportCover configuration must contain config_id.")
+        coefficients = entry.get("coefficients")
+        if not isinstance(coefficients, dict):
+            raise ValueError(f"Shortlisted configuration {entry['config_id']} is missing coefficients.")
+        expected[entry["config_id"]] = {"method": "supportcover", "coefficients": coefficients}
+    for raw_lambda in shortlist.get("mmr_lambdas", []):
+        value = float(raw_lambda)
+        expected[f"mmr_lambda_{value:g}"] = {"method": "mmr_sentence", "mmr_lambda_relevance": value}
+    return expected
+
+
+def aggregate_development_generation(
+    *,
+    shortlist_path: str | Path,
+    output_path: str | Path = "outputs/development/phase3/generation_validation.csv",
+) -> list[dict[str, Any]]:
+    """Curate completed development run summaries without recalculating or copying predictions."""
+    shortlist = _load_json_object(shortlist_path)
+    expected_sha = "0e02afdcdff360d26725abe9c197a457dcbe76c92aa54338cdc146806b9ed7c6"
+    if shortlist.get("development_split_sha256") != expected_sha:
+        raise ValueError("Generation aggregation requires the frozen development split SHA256.")
+    expected_configs = _expected_generation_configs(shortlist)
+    generation_plan = shortlist.get("generation_plan")
+    if not isinstance(generation_plan, list) or not generation_plan:
+        raise ValueError("Shortlist must contain a non-empty generation_plan.")
+
+    allowed_root = Path("outputs/development/phase3/runs").resolve()
+    output = Path(output_path)
+    if not output.resolve().is_relative_to(Path("outputs/development/phase3").resolve()):
+        raise ValueError("Development generation aggregation output must stay under outputs/development/phase3/.")
+
+    seen_configs: set[str] = set()
+    curated: list[dict[str, Any]] = []
+    for item in generation_plan:
+        if not isinstance(item, dict):
+            raise ValueError("Every generation_plan item must be a JSON object.")
+        config_id = item.get("config_id")
+        if not isinstance(config_id, str) or config_id not in expected_configs:
+            raise ValueError(f"Generation plan references an unretained configuration: {config_id!r}.")
+        if config_id in seen_configs:
+            raise ValueError(f"Generation plan duplicates configuration: {config_id}.")
+        seen_configs.add(config_id)
+
+        run_dir = Path(str(item.get("run_dir", "")))
+        if not run_dir.resolve().is_relative_to(allowed_root):
+            raise ValueError(f"Generation run must be under {allowed_root}: {run_dir}")
+        summary_path = run_dir / "summary.csv"
+        predictions_path = run_dir / "predictions.jsonl"
+        config_path = run_dir / "config.resolved.yaml"
+        for source in (summary_path, predictions_path, config_path):
+            if not source.is_file():
+                raise FileNotFoundError(f"Required generation artifact is missing: {source}")
+
+        summary_rows = read_csv_rows(summary_path)
+        if len(summary_rows) != 1:
+            raise ValueError(f"Expected exactly one summary row in {summary_path}; found {len(summary_rows)}.")
+        summary = summary_rows[0]
+        expected = expected_configs[config_id]
+        if summary.get("status") != "completed":
+            raise ValueError(f"Generation run is not completed: {run_dir}")
+        if summary.get("method") != expected["method"]:
+            raise ValueError(f"Generation method mismatch for {config_id}.")
+        if summary.get("experiment_id") != item.get("experiment_id"):
+            raise ValueError(f"Experiment ID mismatch for {config_id}.")
+        if summary.get("split") != "train" or summary.get("split_sha256") != expected_sha:
+            raise ValueError(f"Generation run {config_id} does not use the frozen development split.")
+        if int(float(summary.get("num_examples", "0"))) != 2000:
+            raise ValueError(f"Generation run {config_id} does not contain all 2,000 development examples.")
+        if int(float(summary.get("token_budget", "0"))) != 160:
+            raise ValueError(f"Generation run {config_id} does not use token budget 160.")
+        if int(float(summary.get("retrieval_depth", "0"))) != 5:
+            raise ValueError(f"Generation run {config_id} does not use retrieval depth 5.")
+
+        with config_path.open("r", encoding="utf-8") as handle:
+            resolved = yaml.safe_load(handle) or {}
+        supportcover = resolved.get("supportcover") or {}
+        retrieval = resolved.get("retrieval") or {}
+        if expected["method"] == "supportcover":
+            for field, expected_value in expected["coefficients"].items():
+                if float(supportcover.get(field)) != float(expected_value):
+                    raise ValueError(f"Resolved {field} does not match shortlist for {config_id}.")
+        elif float(retrieval.get("mmr_lambda_relevance")) != float(expected["mmr_lambda_relevance"]):
+            raise ValueError(f"Resolved MMR lambda does not match shortlist for {config_id}.")
+
+        row = {
+            "config_id": config_id,
+            "method": summary["method"],
+            "experiment_id": summary["experiment_id"],
+            "alpha_relevance": supportcover.get("alpha_relevance", ""),
+            "beta_coverage": supportcover.get("beta_coverage", ""),
+            "gamma_redundancy": supportcover.get("gamma_redundancy", ""),
+            "delta_token_cost": supportcover.get("delta_token_cost", ""),
+            "title_bonus": supportcover.get("title_bonus", ""),
+            "mmr_lambda_relevance": retrieval.get("mmr_lambda_relevance", ""),
+            "num_examples": summary["num_examples"],
+            "answer_em": summary["answer_em"],
+            "answer_f1": summary["answer_f1"],
+            "support_f1": summary["support_f1"],
+            "support_recall": summary["support_recall"],
+            "coverage_at_budget": summary["coverage_at_budget"],
+            "evidence_tokens": summary["evidence_tokens"],
+            "split_sha256": summary["split_sha256"],
+            "source_run_directory": str(run_dir),
+            "source_summary": str(summary_path),
+            "source_summary_sha256": file_sha256(summary_path),
+            "source_predictions": str(predictions_path),
+            "source_predictions_sha256": file_sha256(predictions_path),
+        }
+        curated.append({column: row[column] for column in DEVELOPMENT_GENERATION_COLUMNS})
+
+    if seen_configs != set(expected_configs):
+        missing = sorted(set(expected_configs) - seen_configs)
+        raise ValueError("Generation plan is missing retained configurations: " + ", ".join(missing))
+    write_csv(output, curated)
+    return curated
 
 
 def _read_phase3_decision(path: str | Path, config: AppConfig) -> dict[str, Any]:

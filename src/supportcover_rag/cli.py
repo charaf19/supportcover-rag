@@ -15,7 +15,12 @@ from supportcover_rag.io_utils import read_jsonl, write_json
 from supportcover_rag.logging_utils import configure_logging
 from supportcover_rag.pipeline import ExperimentRunner, SUPPORTED_METHODS
 from supportcover_rag.paper_artifacts import export_development_paper_results, export_protocol_paper_results
-from supportcover_rag.phase3 import freeze_development_selection, run_packing_screen, validate_development_protocol
+from supportcover_rag.phase3 import (
+    aggregate_development_generation,
+    freeze_development_selection,
+    run_packing_screen,
+    validate_development_protocol,
+)
 from supportcover_rag.splits import (
     build_record_strata,
     build_split_manifest,
@@ -350,6 +355,21 @@ def freeze_development(
         manifest_path=manifest,
     )
     typer.echo(f"Frozen Phase-3 configuration SHA256: {frozen['config_sha256']}")
+
+
+@app.command("aggregate-development-generation")
+def aggregate_development_generation_command(
+    shortlist: str = typer.Option(
+        "outputs/development/phase3/shortlist.json",
+        help="Recorded Phase-3 shortlist and generation plan.",
+    ),
+    output: str = typer.Option(
+        "outputs/development/phase3/generation_validation.csv",
+        help="Compact development-generation evidence CSV.",
+    ),
+) -> None:
+    rows = aggregate_development_generation(shortlist_path=shortlist, output_path=output)
+    typer.echo(f"Wrote {len(rows)} validated development-generation rows to {output}.")
 
 
 @app.command("export-paper-development")

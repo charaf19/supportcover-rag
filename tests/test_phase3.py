@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 import typer
@@ -17,9 +18,10 @@ from supportcover_rag.config import (
     SplitConfig,
 )
 from supportcover_rag.generation import WhitespaceTokenCounter
-from supportcover_rag.io_utils import read_jsonl, write_json, write_jsonl
+from supportcover_rag.io_utils import read_csv_rows, read_jsonl, write_csv, write_json, write_jsonl, write_yaml
 from supportcover_rag.phase3 import (
     CANONICAL_COMPONENT_VARIANTS,
+    aggregate_development_generation,
     build_packing_plan,
     freeze_development_selection,
     run_packing_screen,
@@ -206,3 +208,93 @@ def test_checked_in_phase3_config_uses_train_and_frozen_development_manifest():
         "stratify_by": ["type", "level"],
     }
     assert "no_coverage" not in payload["ablations"]["variants"]
+
+
+def test_phase3_templates_use_canonical_development_sha256():
+    from supportcover_rag.paper_artifacts import DEVELOPMENT_SPLIT_SHA256
+
+    template_paths = (
+        "configs/phase3_shortlist.template.json",
+        "configs/phase3_decision.template.json",
+    )
+    for template_path in template_paths:
+        with open(template_path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+        assert payload["development_split_sha256"] == DEVELOPMENT_SPLIT_SHA256
+
+
+def test_generation_aggregation_validates_shortlist_and_run_provenance(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    expected_sha = "0e02afdcdff360d26725abe9c197a457dcbe76c92aa54338cdc146806b9ed7c6"
+    base_coefficients = {
+        "alpha_relevance": 1.0,
+        "beta_coverage": 1.2,
+        "gamma_redundancy": 0.6,
+        "delta_token_cost": 0.15,
+        "title_bonus": 0.3,
+    }
+    run_specs = (
+        ("supportcover_beta_coverage_1.2", "supportcover", "EXP001", base_coefficients, 0.5),
+        ("mmr_lambda_0.5", "mmr_sentence", "EXP002", base_coefficients, 0.5),
+    )
+    generation_plan = []
+    for config_id, method, experiment_id, coefficients, mmr_lambda in run_specs:
+        run_dir = Path("outputs/development/phase3/runs/baseline") / f"{experiment_id}_{method}"
+        write_csv(
+            run_dir / "summary.csv",
+            [
+                {
+                    "experiment_id": experiment_id,
+                    "status": "completed",
+                    "method": method,
+                    "split": "train",
+                    "split_sha256": expected_sha,
+                    "num_examples": 2000,
+                    "token_budget": 160,
+                    "retrieval_depth": 5,
+                    "answer_em": 0.1,
+                    "answer_f1": 0.2,
+                    "support_f1": 0.3,
+                    "support_recall": 0.4,
+                    "coverage_at_budget": 0.4,
+                    "evidence_tokens": 150.0,
+                }
+            ],
+        )
+        write_jsonl(run_dir / "predictions.jsonl", [{"example_id": "synthetic"}])
+        write_yaml(
+            run_dir / "config.resolved.yaml",
+            {
+                "supportcover": coefficients,
+                "retrieval": {"mmr_lambda_relevance": mmr_lambda},
+            },
+        )
+        generation_plan.append(
+            {
+                "config_id": config_id,
+                "method": method,
+                "experiment_id": experiment_id,
+                "run_dir": str(run_dir),
+            }
+        )
+
+    shortlist_path = Path("outputs/development/phase3/shortlist.json")
+    write_json(
+        shortlist_path,
+        {
+            "development_split_sha256": expected_sha,
+            "base_supportcover": {
+                "config_id": "supportcover_beta_coverage_1.2",
+                "coefficients": base_coefficients,
+            },
+            "supportcover_candidates": [],
+            "mmr_lambdas": [0.5],
+            "generation_plan": generation_plan,
+        },
+    )
+    output_path = Path("outputs/development/phase3/generation_validation.csv")
+    rows = aggregate_development_generation(shortlist_path=shortlist_path, output_path=output_path)
+
+    assert [row["config_id"] for row in rows] == ["supportcover_beta_coverage_1.2", "mmr_lambda_0.5"]
+    assert len(read_csv_rows(output_path)) == 2
+    assert all(row["source_predictions_sha256"] for row in rows)
