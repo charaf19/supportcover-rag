@@ -222,14 +222,130 @@ python -m supportcover_rag run --config configs/phase1_main.yaml --family debug
 
 ### Publication-grade development tuning
 
-- Status: BLOCKED until Phase 3 infrastructure and protocol checks are complete; data and frozen development IDs are available.
+- Status: INFRASTRUCTURE READY; scientific execution remains pending the project-environment PyTorch install and non-final model smoke test.
 - Working directory: repository root.
-- Required inputs: frozen `data/splits/development_ids.json`, processed training data, complete sensitivity runner, model, and frozen prompt/decoding candidates.
-- Expected outputs: per-example development predictions, OFAT results, component ablation, MMR selection record, and a freeze manifest.
-- Cost: expensive model generation.
+- Required inputs: frozen `data/splits/development_ids.json`, `data/processed/train.jsonl`, `configs/phase3_sensitivity.yaml`, and the configured development model.
+- Expected outputs: generator-free packing rows and summary under `outputs/development/phase3/packing/`, shortlisted development generation runs under `outputs/development/phase3/runs/`, a completed decision record, `configs/final_frozen.yaml`, and `configs/frozen/final_manifest.json`.
+- Cost: the packing screen is CPU/tokenizer-only; only shortlisted comparisons use model generation.
 - Phase availability: Phase 3 only, after Phase 1 and Phase 2 gates.
 
-There is no verified publication-grade development command yet. `configs/phase3_sensitivity.yaml` declares a development ID file but points `experiments.split` at validation and no CLI command consumes its sensitivity grid. Running it now would not satisfy the protocol.
+The Phase-3 config is fail-closed on `role: development`, `experiments.split: train`, the full 2,000-ID count, the frozen development SHA-256, and `runtime.limit: null`. The packing command evaluates exactly 20 OFAT SupportCover settings, four MMR lambdas, and five clean component variants. It does not instantiate the answer generator. The legacy conflated `no_coverage` variant is excluded.
+
+### Phase-3 execution order
+
+#### A. Environment/GPU verification
+
+```powershell
+.\.venv\Scripts\python.exe -m supportcover_rag check-environment --output outputs/development/phase3/environment.preinstall.json
+nvidia-smi --query-gpu=name,driver_version,memory.total,compute_cap --format=csv
+```
+
+#### B. PyTorch installation if required
+
+The repository `.venv` currently has Transformers but no PyTorch. This Windows machine has an NVIDIA GeForce RTX 5060 Laptop GPU and supports CUDA; the verified CUDA 13.0 wheel command is:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install torch==2.12.1 --index-url https://download.pytorch.org/whl/cu130
+.\.venv\Scripts\python.exe -c "import torch; print(torch.__version__); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0)); print(torch.cuda.get_device_capability(0))"
+.\.venv\Scripts\python.exe -m supportcover_rag check-environment --output outputs/development/phase3/environment.json
+```
+
+Do not continue unless `torch.cuda.is_available()` is `True` and the recorded backend is `cuda`.
+
+#### C. Cheap Phase-3 unit tests
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_phase3.py tests/test_generation.py tests/test_packing_baselines.py tests/test_supportcover_ablation.py -q
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+#### D. Tiny non-scientific smoke test
+
+This reads only two leading training examples, writes debug artifacts, and is not admissible tuning evidence.
+
+```powershell
+.\.venv\Scripts\python.exe -m supportcover_rag run --config configs/phase3_smoke.yaml --family debug --notes "NON-SCIENTIFIC CUDA/model smoke; never use for tuning"
+```
+
+#### E. Packing-level sensitivity on 2,000 development examples
+
+```powershell
+.\.venv\Scripts\python.exe -m supportcover_rag run-development-packing --config configs/phase3_sensitivity.yaml
+```
+
+The resulting `packing_summary.csv` is explicitly packing-only: it contains support EM/precision/recall/F1, coverage at budget, and evidence-token measurements, but no answer-generation metric.
+
+#### F. Shortlist configurations
+
+```powershell
+Copy-Item configs/phase3_shortlist.template.json outputs/development/phase3/shortlist.json
+```
+
+Fill the shortlist only from the complete development packing summary. Retain the untuned base and non-dominated candidates; use support F1, support recall, coverage at budget, and evidence tokens, with lower numeric parameter value as the exact-tie breaker. Record the packing-manifest path and never combine independent OFAT winners into an untested Cartesian configuration.
+
+#### G. Generation-based development validation where scientifically necessary
+
+For each shortlisted SupportCover coefficient vector, run this command with the four values copied exactly from `shortlist.json`:
+
+```powershell
+$Beta = [double](Read-Host "beta_coverage from one recorded shortlist candidate")
+$Title = [double](Read-Host "title_bonus from that same candidate")
+$Delta = [double](Read-Host "delta_token_cost from that same candidate")
+$Gamma = [double](Read-Host "gamma_redundancy from that same candidate")
+.\.venv\Scripts\python.exe -m supportcover_rag run --config configs/phase3_sensitivity.yaml --family baseline --methods supportcover --beta-coverage $Beta --title-bonus $Title --delta-token-cost $Delta --gamma-redundancy $Gamma --notes "Phase 3 shortlisted SupportCover development validation"
+```
+
+`$Beta`, `$Title`, `$Delta`, and `$Gamma` must be assigned from a single recorded OFAT candidate, not independently optimized into a Cartesian combination.
+
+#### H. MMR lambda selection
+
+Packing evaluates all four preregistered lambdas. Run answer generation only for the MMR lambdas retained in `shortlist.json`:
+
+```powershell
+$MmrShortlist = (Read-Host "Comma-separated MMR lambdas retained in shortlist.json").Split(',') | ForEach-Object { [double]$_.Trim() }
+$MmrShortlist | ForEach-Object { .\.venv\Scripts\python.exe -m supportcover_rag run --config configs/phase3_sensitivity.yaml --family baseline --methods mmr_sentence --mmr-lambda $_ --notes "Phase 3 shortlisted MMR development validation" }
+```
+
+#### I. Component ablation
+
+After selecting the development-only full SupportCover coefficient vector, assign its four tuned values and execute the five clean variants. The checked-in config excludes legacy `no_coverage`.
+
+```powershell
+$Beta = [double](Read-Host "selected beta_coverage")
+$Title = [double](Read-Host "selected title_bonus")
+$Delta = [double](Read-Host "selected delta_token_cost")
+$Gamma = [double](Read-Host "selected gamma_redundancy")
+.\.venv\Scripts\python.exe -m supportcover_rag run-ablations --config configs/phase3_sensitivity.yaml --family ablation_component --beta-coverage $Beta --title-bonus $Title --delta-token-cost $Delta --gamma-redundancy $Gamma --notes "Phase 3 clean component ablation on development"
+```
+
+#### J. Select final configuration using development evidence only
+
+```powershell
+Copy-Item configs/phase3_decision.template.json outputs/development/phase3/decision.json
+```
+
+Complete every non-null field using only packing and generation artifacts under `outputs/development/phase3/`. The freeze command rejects out-of-grid selections, missing evidence classes, and evidence paths outside that development-only directory.
+
+#### K. Produce `configs/final_frozen.yaml`
+
+#### L. Produce frozen manifest and SHA256
+
+```powershell
+.\.venv\Scripts\python.exe -m supportcover_rag freeze-development --config configs/phase3_sensitivity.yaml --decision outputs/development/phase3/decision.json --final-ids data/splits/final_ids.json --final-config configs/final_frozen.yaml --manifest configs/frozen/final_manifest.json
+```
+
+The command creates both K and L in one validated operation only after all required development evidence exists. It records SHA-256 hashes for the decision and evidence artifacts, the selected coefficients, selected MMR lambda, the development split SHA, and the final split SHA.
+
+#### M. Verify final population has never been used
+
+```powershell
+Get-ChildItem outputs/development/phase3 -Recurse -File -Include *.yaml,*.json | Select-String -Pattern "data/processed/validation.jsonl|data/splits/final_ids.json"
+.\.venv\Scripts\python.exe -m supportcover_rag validate-splits --development data/splits/development_ids.json --final data/splits/final_ids.json --output data/splits/split_validation.json
+git diff --check
+git status --short
+```
+
+The first command should find no tuning input reference; the freeze manifest may contain the final split SHA and final manifest path, but no final prediction or metric. Do not execute the frozen final config during Phase 3.
 
 ## Final experiments
 

@@ -1,0 +1,18 @@
+{
+  "development_split_sha256": "0e02afdcdff360d26725abe9c197a457dcbe76c92aa54338cdc146806b9ed7c6c",
+  "selected_supportcover_coefficients": {
+    "alpha_relevance": null,
+    "beta_coverage": null,
+    "gamma_redundancy": null,
+    "delta_token_cost": null,
+    "title_bonus": null
+  },
+  "selected_mmr_lambda_relevance": null,
+  "evidence_artifacts": {
+    "packing_screen": "outputs/development/phase3/packing/packing_summary.csv",
+    "generation_validation": null,
+    "mmr_selection": null,
+    "component_ablation": null
+  },
+  "decision_notes": null
+}

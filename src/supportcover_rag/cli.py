@@ -9,10 +9,12 @@ import typer
 from supportcover_rag.config import AppConfig, load_config
 from supportcover_rag.data import acquire_hotpotqa, preprocess_raw_split
 from supportcover_rag.error_analysis import run_error_analysis as generate_error_analysis
+from supportcover_rag.environment import collect_environment_manifest
 from supportcover_rag.experiment_outputs import ExperimentFamily, VALID_EXPERIMENT_FAMILIES, parse_experiment_family
 from supportcover_rag.io_utils import read_jsonl, write_json
 from supportcover_rag.logging_utils import configure_logging
 from supportcover_rag.pipeline import ExperimentRunner, SUPPORTED_METHODS
+from supportcover_rag.phase3 import freeze_development_selection, run_packing_screen, validate_development_protocol
 from supportcover_rag.splits import (
     build_record_strata,
     build_split_manifest,
@@ -77,6 +79,13 @@ def _resolve_split(split: str | None, config: AppConfig) -> str:
     candidate = split.strip() if split is not None else config.experiments.split.strip()
     if not candidate:
         raise typer.BadParameter("Experiment split cannot be empty.")
+    if config.split.role.strip().lower() == "development":
+        if candidate.lower() != "train":
+            raise typer.BadParameter("role=development is locked to the processed train split.")
+        try:
+            validate_development_protocol(config)
+        except (FileNotFoundError, ValueError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
     return candidate
 
 
@@ -92,6 +101,11 @@ def _apply_overrides(
     methods: list[str] | None,
     max_new_tokens: int | None,
     batch_size: int | None,
+    beta_coverage: float | None,
+    title_bonus: float | None,
+    delta_token_cost: float | None,
+    gamma_redundancy: float | None,
+    mmr_lambda: float | None,
 ) -> AppConfig:
     if any(value is not None for value in (backend, model, ollama_base_url, device, dtype, max_new_tokens, batch_size)):
         config = replace(
@@ -111,6 +125,31 @@ def _apply_overrides(
         config = replace(config, runtime=replace(config.runtime, limit=limit))
     if methods is not None:
         config = replace(config, experiments=replace(config.experiments, methods=methods))
+    tuning_override_requested = any(
+        value is not None
+        for value in (beta_coverage, title_bonus, delta_token_cost, gamma_redundancy, mmr_lambda)
+    )
+    if tuning_override_requested and config.split.role.strip().lower() != "development":
+        raise typer.BadParameter("Coefficient and MMR overrides are permitted only for role=development.")
+    if any(value is not None for value in (beta_coverage, title_bonus, delta_token_cost, gamma_redundancy)):
+        config = replace(
+            config,
+            supportcover=replace(
+                config.supportcover,
+                beta_coverage=beta_coverage if beta_coverage is not None else config.supportcover.beta_coverage,
+                title_bonus=title_bonus if title_bonus is not None else config.supportcover.title_bonus,
+                delta_token_cost=(
+                    delta_token_cost if delta_token_cost is not None else config.supportcover.delta_token_cost
+                ),
+                gamma_redundancy=(
+                    gamma_redundancy if gamma_redundancy is not None else config.supportcover.gamma_redundancy
+                ),
+            ),
+        )
+    if mmr_lambda is not None:
+        if not 0.0 <= mmr_lambda <= 1.0:
+            raise typer.BadParameter("--mmr-lambda must be between 0 and 1.")
+        config = replace(config, retrieval=replace(config.retrieval, mmr_lambda_relevance=mmr_lambda))
     return config
 
 
@@ -126,6 +165,11 @@ def _load_app_config(
     methods: str | None = None,
     max_new_tokens: int | None = None,
     batch_size: int | None = None,
+    beta_coverage: float | None = None,
+    title_bonus: float | None = None,
+    delta_token_cost: float | None = None,
+    gamma_redundancy: float | None = None,
+    mmr_lambda: float | None = None,
 ) -> tuple[Path, AppConfig]:
     config = load_config(config_path)
     config = _apply_overrides(
@@ -139,6 +183,11 @@ def _load_app_config(
         methods=_parse_methods(methods),
         max_new_tokens=max_new_tokens,
         batch_size=batch_size,
+        beta_coverage=beta_coverage,
+        title_bonus=title_bonus,
+        delta_token_cost=delta_token_cost,
+        gamma_redundancy=gamma_redundancy,
+        mmr_lambda=mmr_lambda,
     )
     configure_logging(config.logging.level)
     return Path(config_path), config
@@ -246,6 +295,62 @@ def validate_splits(
     )
 
 
+@app.command("run-development-packing")
+def run_development_packing(
+    config: str = typer.Option(..., help="Path to the development-only Phase-3 YAML config."),
+) -> None:
+    _, cfg = _load_app_config(config)
+    manifest = run_packing_screen(cfg)
+    typer.echo(
+        "Completed generator-free Phase-3 packing screen on "
+        f"{manifest['development_count']} development examples "
+        f"({manifest['num_plan_items']} configurations)."
+    )
+
+
+@app.command("check-environment")
+def check_environment(
+    output: str = typer.Option(
+        "outputs/development/phase3/environment.json",
+        help="Path for the machine-readable runtime manifest.",
+    ),
+) -> None:
+    manifest = collect_environment_manifest(metadata={"phase": 3, "scientific_role": "development"})
+    write_json(output, manifest)
+    accelerator = manifest["accelerator"]
+    typer.echo(
+        f"Environment recorded at {output}: "
+        f"torch={manifest['packages']['torch']}, "
+        f"accelerator={accelerator['backend'] or 'none'}, "
+        f"device={accelerator['device_name'] or 'none'}."
+    )
+
+
+@app.command("freeze-development")
+def freeze_development(
+    config: str = typer.Option(..., help="Path to the development-only Phase-3 YAML config."),
+    decision: str = typer.Option(..., help="Development evidence and selected-parameter decision JSON."),
+    final_ids: str = typer.Option(
+        "data/splits/final_ids.json",
+        help="Frozen final ID manifest; only IDs/count/SHA are read, never final examples or predictions.",
+    ),
+    final_config: str = typer.Option("configs/final_frozen.yaml", help="Output frozen final YAML config."),
+    manifest: str = typer.Option(
+        "configs/frozen/final_manifest.json",
+        help="Output deterministic freeze manifest.",
+    ),
+) -> None:
+    _, cfg = _load_app_config(config)
+    frozen = freeze_development_selection(
+        cfg,
+        decision_path=decision,
+        final_ids_path=final_ids,
+        final_config_path=final_config,
+        manifest_path=manifest,
+    )
+    typer.echo(f"Frozen Phase-3 configuration SHA256: {frozen['config_sha256']}")
+
+
 @app.command("run")
 def run(
     config: str = typer.Option(..., help="Path to YAML config."),
@@ -259,6 +364,11 @@ def run(
     limit: int | None = typer.Option(None, min=1, help="Limit the number of processed examples at runtime."),
     max_new_tokens: int | None = typer.Option(None, min=1, help="Override generation.max_new_tokens."),
     batch_size: int | None = typer.Option(None, min=1, help="Override generation.batch_size."),
+    beta_coverage: float | None = typer.Option(None, help="Development-only SupportCover beta override."),
+    title_bonus: float | None = typer.Option(None, help="Development-only SupportCover title-bonus override."),
+    delta_token_cost: float | None = typer.Option(None, help="Development-only SupportCover token-cost override."),
+    gamma_redundancy: float | None = typer.Option(None, help="Development-only SupportCover redundancy override."),
+    mmr_lambda: float | None = typer.Option(None, help="Development-only MMR lambda override."),
     family: str | None = typer.Option(
         None,
         help="Experiment family: " + "|".join(VALID_EXPERIMENT_FAMILIES) + ". Defaults to main.",
@@ -277,6 +387,11 @@ def run(
         methods=methods,
         max_new_tokens=max_new_tokens,
         batch_size=batch_size,
+        beta_coverage=beta_coverage,
+        title_bonus=title_bonus,
+        delta_token_cost=delta_token_cost,
+        gamma_redundancy=gamma_redundancy,
+        mmr_lambda=mmr_lambda,
     )
     resolved_split = _resolve_split(split, cfg)
     split_path = Path(cfg.paths.data_root) / "processed" / f"{resolved_split}.jsonl"
@@ -303,6 +418,10 @@ def run_ablations(
     limit: int | None = typer.Option(None, min=1, help="Limit the number of processed examples at runtime."),
     max_new_tokens: int | None = typer.Option(None, min=1, help="Override generation.max_new_tokens."),
     batch_size: int | None = typer.Option(None, min=1, help="Override generation.batch_size."),
+    beta_coverage: float | None = typer.Option(None, help="Development-only SupportCover beta override."),
+    title_bonus: float | None = typer.Option(None, help="Development-only SupportCover title-bonus override."),
+    delta_token_cost: float | None = typer.Option(None, help="Development-only SupportCover token-cost override."),
+    gamma_redundancy: float | None = typer.Option(None, help="Development-only SupportCover redundancy override."),
     family: str | None = typer.Option(
         None,
         help=(
@@ -323,6 +442,10 @@ def run_ablations(
         limit=limit,
         max_new_tokens=max_new_tokens,
         batch_size=batch_size,
+        beta_coverage=beta_coverage,
+        title_bonus=title_bonus,
+        delta_token_cost=delta_token_cost,
+        gamma_redundancy=gamma_redundancy,
     )
     resolved_split = _resolve_split(split, cfg)
     split_path = Path(cfg.paths.data_root) / "processed" / f"{resolved_split}.jsonl"

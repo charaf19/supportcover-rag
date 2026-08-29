@@ -127,6 +127,25 @@ class SensitivityConfig:
 
 
 @dataclass(slots=True)
+class DevelopmentTuningConfig:
+    output_dir: str = "./outputs/development/phase3"
+    expected_development_count: int = 2000
+    expected_development_sha256: str = "0e02afdcdff360d26725abe9c197a457dcbe76c92aa54338cdc146806b9ed7c6"
+    expected_final_count: int = 7405
+    expected_final_sha256: str = "fc5c4bbd3b2a0304803f118cc098eec9d78521ac7f769877774239f52a4ecf6c"
+    mmr_lambdas: list[float] = field(default_factory=lambda: [0.3, 0.5, 0.7, 0.9])
+    component_variants: list[str] = field(
+        default_factory=lambda: [
+            "full",
+            "no_query_coverage",
+            "no_title_gain",
+            "no_redundancy",
+            "no_token_penalty",
+        ]
+    )
+
+
+@dataclass(slots=True)
 class RobustnessConfig:
     models: list[str] = field(default_factory=list)
     supportcover_final_variant: str = "no_redundancy"
@@ -194,6 +213,7 @@ class AppConfig:
     experiments: ExperimentsConfig = field(default_factory=ExperimentsConfig)
     ablations: AblationsConfig = field(default_factory=AblationsConfig)
     sensitivity: SensitivityConfig = field(default_factory=SensitivityConfig)
+    development_tuning: DevelopmentTuningConfig = field(default_factory=DevelopmentTuningConfig)
     robustness: RobustnessConfig = field(default_factory=RobustnessConfig)
     error_analysis: ErrorAnalysisConfig = field(default_factory=ErrorAnalysisConfig)
     systems_summary: SystemsSummaryConfig = field(default_factory=SystemsSummaryConfig)
@@ -214,6 +234,7 @@ _DEF_TYPE_MAP = {
     "experiments": ExperimentsConfig,
     "ablations": AblationsConfig,
     "sensitivity": SensitivityConfig,
+    "development_tuning": DevelopmentTuningConfig,
     "robustness": RobustnessConfig,
     "error_analysis": ErrorAnalysisConfig,
     "systems_summary": SystemsSummaryConfig,

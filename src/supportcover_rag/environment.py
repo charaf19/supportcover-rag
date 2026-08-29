@@ -89,6 +89,9 @@ def collect_environment_manifest(
                 "backend": "cuda",
                 "device_name": _safe_call(lambda: torch.cuda.get_device_name(0)),
                 "device_memory_bytes": _safe_call(lambda: int(torch.cuda.get_device_properties(0).total_memory)),
+                "compute_capability": _safe_call(lambda: list(torch.cuda.get_device_capability(0))),
+                "torch_cuda_build": getattr(getattr(torch, "version", None), "cuda", None),
+                "cudnn_version": _safe_call(torch.backends.cudnn.version),
             }
         else:
             mps_backend = getattr(getattr(torch, "backends", None), "mps", None)

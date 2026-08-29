@@ -47,35 +47,41 @@ def build_frozen_manifest(
     *,
     supportcover_coefficients: Mapping[str, float],
     mmr_lambda_relevance: float,
-    split_sha256: str,
+    development_split_sha256: str,
+    final_split_sha256: str,
     dataset: Any,
     model: Any,
     prompt_settings: Mapping[str, Any],
     decoding_settings: Mapping[str, Any],
     token_budget: int,
     retrieval_depth: int,
+    selection_evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     missing = sorted(_REQUIRED_SUPPORTCOVER_COEFFICIENTS - set(supportcover_coefficients))
     if missing:
         raise ValueError(f"Missing final SupportCover coefficients: {', '.join(missing)}")
-    if not split_sha256:
+    if not development_split_sha256:
+        raise ValueError("A non-empty development split SHA256 is required.")
+    if not final_split_sha256:
         raise ValueError("A non-empty final split SHA256 is required.")
 
     configuration = canonicalize(
         {
             "supportcover_coefficients": dict(supportcover_coefficients),
             "mmr_lambda_relevance": mmr_lambda_relevance,
-            "split_sha256": split_sha256,
+            "development_split_sha256": development_split_sha256,
+            "final_split_sha256": final_split_sha256,
             "dataset": dataset,
             "model": model,
             "prompt_settings": dict(prompt_settings),
             "decoding_settings": dict(decoding_settings),
             "token_budget": token_budget,
             "retrieval_depth": retrieval_depth,
+            "selection_evidence": dict(selection_evidence or {}),
         }
     )
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "configuration": configuration,
         "config_sha256": canonical_sha256(configuration),
     }

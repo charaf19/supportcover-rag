@@ -13,7 +13,7 @@ _FACTOR_FIELDS = (
     ("delta", "delta_token_cost"),
     ("gamma", "gamma_redundancy"),
 )
-_FORBIDDEN_SENSITIVITY_ROLES = {"final", "test"}
+_REQUIRED_SENSITIVITY_ROLE = "development"
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,10 +36,11 @@ class OFATResultDescriptor:
 
 def validate_sensitivity_role(split_role: str) -> str:
     normalized = split_role.strip().lower()
-    if normalized in _FORBIDDEN_SENSITIVITY_ROLES:
-        raise ValueError(f"Sensitivity analysis cannot use split role '{normalized}'.")
-    if not normalized:
-        raise ValueError("Sensitivity analysis requires an explicit development split role.")
+    if normalized != _REQUIRED_SENSITIVITY_ROLE:
+        rendered = normalized or "<empty>"
+        raise ValueError(
+            f"Sensitivity analysis requires split role 'development'; received '{rendered}'."
+        )
     return normalized
 
 

@@ -1,16 +1,92 @@
-# DEVELOPMENT-ONLY: never use this configuration with final or test IDs.
+# DEVELOPMENT-ONLY. This configuration must never read validation examples or final IDs.
+seed: 42
+
+paths:
+  data_root: ./data
+  output_root: ./outputs/development/phase3/runs
+
+logging:
+  level: INFO
+
+runtime:
+  limit: null
+  overwrite: false
+  resume: true
+
+raw_data:
+  dataset_path: hotpotqa/hotpot_qa
+  dataset_config: distractor
+  splits: [train]
+
 split:
   ids_file: ./data/splits/development_ids.json
   role: development
-  stratify_by: type
+  stratify_by: [type, level]
+
+retrieval:
+  method: bm25
+  top_k_paragraphs: 5
+  bm25_k1: 1.5
+  bm25_b: 0.75
+  mmr_lambda_relevance: 0.5
+
+supportcover:
+  token_budget: 160
+  stop_threshold: 0.0
+  alpha_relevance: 1.0
+  beta_coverage: 1.2
+  gamma_redundancy: 0.6
+  delta_token_cost: 0.15
+  title_bonus: 0.3
+
+prompting:
+  include_titles: true
+  allow_abstain: true
+  system_instruction: >
+    Answer using only the provided evidence.
+    If the evidence is insufficient, output exactly: insufficient evidence.
+  user_instruction: >
+    Return only the short final answer. Do not explain.
+
+generation:
+  backend: transformers
+  model_name_or_path: Qwen/Qwen3-4B-Instruct-2507
+  device: cuda
+  dtype: float16
+  batch_size: 1
+  temperature: 0.0
+  max_new_tokens: 12
+  do_sample: false
+  trust_remote_code: false
 
 experiments:
-  split: validation
-  methods:
-    - supportcover
+  split: train
+  methods: [supportcover]
 
 sensitivity:
   beta: [0.3, 0.6, 1.2, 1.8, 2.4]
-  title: [0, 0.15, 0.30, 0.45, 0.60]
-  delta: [0, 0.075, 0.15, 0.225, 0.30]
-  gamma: [0, 0.15, 0.30, 0.60, 0.90]
+  title: [0.0, 0.15, 0.30, 0.45, 0.60]
+  delta: [0.0, 0.075, 0.15, 0.225, 0.30]
+  gamma: [0.0, 0.15, 0.30, 0.60, 0.90]
+
+development_tuning:
+  output_dir: ./outputs/development/phase3
+  expected_development_count: 2000
+  expected_development_sha256: 0e02afdcdff360d26725abe9c197a457dcbe76c92aa54338cdc146806b9ed7c6
+  expected_final_count: 7405
+  expected_final_sha256: fc5c4bbd3b2a0304803f118cc098eec9d78521ac7f769877774239f52a4ecf6c
+  mmr_lambdas: [0.3, 0.5, 0.7, 0.9]
+  component_variants:
+    - full
+    - no_query_coverage
+    - no_title_gain
+    - no_redundancy
+    - no_token_penalty
+
+ablations:
+  variants:
+    - full
+    - no_query_coverage
+    - no_title_gain
+    - no_redundancy
+    - no_token_penalty

@@ -1,0 +1,38 @@
+# NON-SCIENTIFIC two-example smoke test. It reads HotpotQA train only and cannot tune parameters.
+seed: 42
+paths:
+  data_root: ./data
+  output_root: ./outputs
+runtime:
+  limit: 2
+  overwrite: false
+  resume: false
+split:
+  ids_file: ""
+  role: smoke
+retrieval:
+  method: bm25
+  top_k_paragraphs: 5
+  bm25_k1: 1.5
+  bm25_b: 0.75
+supportcover:
+  token_budget: 160
+  stop_threshold: 0.0
+  alpha_relevance: 1.0
+  beta_coverage: 1.2
+  gamma_redundancy: 0.6
+  delta_token_cost: 0.15
+  title_bonus: 0.3
+generation:
+  backend: transformers
+  model_name_or_path: Qwen/Qwen3-4B-Instruct-2507
+  device: cuda
+  dtype: float16
+  batch_size: 1
+  temperature: 0.0
+  max_new_tokens: 12
+  do_sample: false
+  trust_remote_code: false
+experiments:
+  split: train
+  methods: [supportcover]
