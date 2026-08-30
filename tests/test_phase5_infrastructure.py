@@ -193,7 +193,7 @@ def test_final_gate_rejects_overlapping_populations(tmp_path: Path) -> None:
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     config = replace(config, freeze=replace(config.freeze, sha256=manifest["config_sha256"]))
 
-    with pytest.raises(ValueError, match="overlap"):
+    with pytest.raises(ValueError, match="not disjoint"):
         validate_final_execution_config(
             config,
             manifest_path=manifest_path,
