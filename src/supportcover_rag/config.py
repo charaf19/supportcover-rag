@@ -171,7 +171,15 @@ class DevelopmentTuningConfig:
 @dataclass(slots=True)
 class RobustnessConfig:
     models: list[str] = field(default_factory=list)
-    supportcover_final_variant: str = "no_redundancy"
+    # Legacy compatibility only. Phase-6 validation must never use this value as
+    # scientific method identity; that identity comes from the Phase-3 freeze.
+    supportcover_final_variant: str | None = None
+    freeze_manifest: str = "configs/frozen/final_manifest.json"
+    main_study_completion_manifest: str = "outputs/final/main_study_completion.json"
+    budget_plan: str = "configs/robustness_budget.template.yaml"
+    model_plan: str = "configs/robustness_models.template.yaml"
+    cross_dataset_plan: str = "configs/robustness_cross_dataset.template.yaml"
+    output_root: str = "outputs/final/robustness"
 
 
 @dataclass(slots=True)

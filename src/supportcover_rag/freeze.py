@@ -56,6 +56,8 @@ def build_frozen_manifest(
     token_budget: int,
     retrieval_depth: int,
     selection_evidence: Mapping[str, Any] | None = None,
+    supportcover_method: str = "supportcover_final",
+    supportcover_variant: str = "development_selected",
 ) -> dict[str, Any]:
     missing = sorted(_REQUIRED_SUPPORTCOVER_COEFFICIENTS - set(supportcover_coefficients))
     if missing:
@@ -67,6 +69,8 @@ def build_frozen_manifest(
 
     configuration = canonicalize(
         {
+            "supportcover_method": supportcover_method,
+            "supportcover_variant": supportcover_variant,
             "supportcover_coefficients": dict(supportcover_coefficients),
             "mmr_lambda_relevance": mmr_lambda_relevance,
             "development_split_sha256": development_split_sha256,

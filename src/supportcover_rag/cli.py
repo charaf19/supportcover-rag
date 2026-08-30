@@ -29,6 +29,7 @@ from supportcover_rag.phase3 import (
     run_packing_screen,
     validate_development_protocol,
 )
+from supportcover_rag.robustness import aggregate_robustness_runs, verify_robustness_readiness
 from supportcover_rag.splits import (
     build_record_strata,
     build_split_manifest,
@@ -653,6 +654,75 @@ def run_robustness(
     batch_size: int | None = typer.Option(None, min=1, help="Override generation.batch_size."),
     notes: str = typer.Option("", help="Optional notes recorded in the experiment registry."),
 ) -> None:
+    raise typer.BadParameter(
+        "The historical ungated run-robustness command is disabled. "
+        "Phase-6 execution must use a validated family plan after the Phase-3 freeze "
+        "and Phase-5 main-study completion."
+    )
+
+
+@app.command("verify-robustness-readiness")
+def verify_robustness_readiness_command(
+    freeze_manifest: str = typer.Option(
+        "configs/frozen/final_manifest.json", help="Phase-3 freeze manifest."
+    ),
+    main_completion: str = typer.Option(
+        "outputs/final/main_study_completion.json", help="Phase-5 completion manifest."
+    ),
+    budget_plan: str = typer.Option(
+        "configs/robustness_budget.template.yaml", help="Budget-robustness plan."
+    ),
+    model_plan: str = typer.Option(
+        "configs/robustness_models.template.yaml", help="Model-robustness plan."
+    ),
+    cross_dataset_plan: str = typer.Option(
+        "configs/robustness_cross_dataset.template.yaml", help="Cross-dataset plan."
+    ),
+    output: str | None = typer.Option(None, help="Optional metadata-only readiness report JSON."),
+) -> None:
+    report = verify_robustness_readiness(
+        freeze_manifest_path=freeze_manifest,
+        main_completion_path=main_completion,
+        budget_plan_path=budget_plan,
+        model_plan_path=model_plan,
+        cross_dataset_plan_path=cross_dataset_plan,
+        output_path=output,
+    )
+    for check in report.checks:
+        typer.echo(f"{check.name}: {'PASS' if check.passed else 'FAIL'} - {check.detail}")
+    typer.echo(f"ROBUSTNESS EXECUTION: {'READY' if report.ready else 'BLOCKED'}")
+
+
+@app.command("aggregate-robustness")
+def aggregate_robustness_command(
+    family: str = typer.Option(..., help="Robustness family: budget, models, or cross_dataset."),
+    run_dir: list[str] = typer.Option(..., "--run-dir", help="Completed run directory; repeat per run."),
+    output: str = typer.Option(..., help="Family-specific aggregate CSV under outputs/final/robustness."),
+) -> None:
+    rows = aggregate_robustness_runs(family, run_dir, output_path=output)
+    typer.echo(f"Aggregated {len(rows)} completed {family} robustness runs: {output}")
+
+
+@app.command("run-robustness-legacy-disabled")
+def run_robustness_legacy_disabled(
+    config: str = typer.Option(..., help="Historical config; retained only for traceability."),
+) -> None:
+    """Never executes: legacy robustness did not enforce the scientific freeze boundary."""
+    raise typer.BadParameter(
+        "Legacy robustness execution is intentionally disabled; use Phase-6 family plans after readiness passes."
+    )
+
+
+def _historical_run_robustness_unreachable(
+    config: str,
+    split: str | None,
+    device: str | None,
+    dtype: str | None,
+    limit: int | None,
+    batch_size: int | None,
+    notes: str,
+) -> None:
+    """Preserve the old implementation for source archaeology, not execution."""
     _, cfg = _load_app_config(
         config,
         device=device,

@@ -1,0 +1,33 @@
+schema_version: 1
+robustness_family: cross_dataset
+role: cross_dataset_robustness
+freeze_manifest: configs/frozen/final_manifest.json
+freeze_sha256: __FROM_PHASE3_FREEZE__
+main_study_completion_manifest: outputs/final/main_study_completion.json
+output_root: outputs/final/robustness/cross_dataset
+tuning_permitted: false
+primary_final_split_sha256: __FROM_PHASE3_FREEZE__
+
+# No dataset is approved yet. TwoWikiMultiHopQA is only a historical candidate.
+dataset:
+  name: __PREREGISTER_LATER__
+  version_or_revision: __PREREGISTER_LATER__
+  split: __PREREGISTER_LATER__
+  source_revision: __PREREGISTER_LATER__
+  license_or_reference: __PREREGISTER_LATER__
+  id_file: __PREREGISTER_LATER__
+  count: __PREREGISTER_LATER__
+  id_sha256: __PREREGISTER_LATER__
+  sampling_rule: __PREREGISTER_LATER__
+  seed: __PREREGISTER_LATER__
+
+method_protocol: __FROM_PHASE3_FREEZE__
+token_budget_protocol: __PREREGISTER_LATER__
+retrieval_protocol: __PREREGISTER_LATER__
+generator_protocol: __PREREGISTER_LATER__
+allowed_changed_fields: [dataset, split_role, split_sha256]
+forbidden_changed_fields: [method, variant, coefficients, retrieval_depth, selection_logic]
+
+runtime:
+  resume: true
+  overwrite: false

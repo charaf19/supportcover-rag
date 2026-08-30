@@ -310,7 +310,7 @@ def resolve_final_main_config(
         external_compressor=template.external_compressor,
         final_study=template.final_study,
         experiments=template.experiments,
-        robustness=replace(frozen.robustness, supportcover_final_variant="full"),
+        robustness=replace(frozen.robustness, supportcover_final_variant=None),
     )
     validate_final_execution_config(
         resolved,

@@ -1,0 +1,39 @@
+schema_version: 1
+robustness_family: models
+scientific_role: primary_final
+freeze_manifest: configs/frozen/final_manifest.json
+freeze_sha256: __FROM_PHASE3_FREEZE__
+main_study_completion_manifest: outputs/final/main_study_completion.json
+output_root: outputs/final/robustness/models
+population:
+  role: primary_final
+  ids_file: data/splits/final_ids.json
+  count: 7405
+  split_sha256: __FROM_PHASE3_FREEZE__
+frozen_protocol: __FROM_PHASE3_FREEZE__
+primary_generator: __FROM_PHASE3_FREEZE__
+models: []
+allowed_changed_fields: [generator]
+forbidden_changed_fields:
+  - method
+  - variant
+  - coefficients
+  - token_budget
+  - retrieval_depth
+  - retrieval_settings
+  - retrieval_pool
+  - prompt_settings
+  - decoding_intent
+  - split_role
+  - split_sha256
+
+packed_evidence:
+  reuse: true
+  packing_tokenizer: __FROM_PHASE3_FREEZE__
+  record_generation_tokenizer: true
+  record_actual_evidence_tokens: true
+  record_prompt_tokens_when_available: true
+
+runtime:
+  resume: true
+  overwrite: false

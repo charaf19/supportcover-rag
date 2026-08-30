@@ -52,22 +52,22 @@ FINAL_STUDY_PLAN: tuple[StudyStage, ...] = (
     StudyStage(
         order=5,
         name="token_budget_robustness",
-        depends_on=("frozen_configuration_validation",),
-        requires=("frozen_budget_protocol", "explicit_final_ids", "final_split_sha256"),
+        depends_on=("frozen_configuration_validation", "main_study"),
+        requires=("main_study_completion", "frozen_budget_protocol", "explicit_final_ids", "final_split_sha256"),
         produces=("budget_robustness_predictions", "budget_robustness_metrics"),
     ),
     StudyStage(
         order=6,
         name="model_robustness",
-        depends_on=("frozen_configuration_validation",),
-        requires=("frozen_model_protocol", "explicit_final_ids", "final_split_sha256"),
+        depends_on=("frozen_configuration_validation", "main_study"),
+        requires=("main_study_completion", "frozen_model_protocol", "explicit_final_ids", "final_split_sha256"),
         produces=("model_robustness_predictions", "model_robustness_metrics"),
     ),
     StudyStage(
         order=7,
         name="cross_dataset_robustness",
-        depends_on=("frozen_configuration_validation",),
-        requires=("twowiki_adapter", "cross_dataset_final_ids", "frozen_cross_dataset_protocol"),
+        depends_on=("frozen_configuration_validation", "main_study"),
+        requires=("main_study_completion", "multihop_qa_adapter", "cross_dataset_final_ids", "frozen_cross_dataset_protocol"),
         produces=("cross_dataset_predictions", "cross_dataset_metrics"),
     ),
     StudyStage(

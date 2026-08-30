@@ -1,0 +1,36 @@
+schema_version: 1
+robustness_family: budget
+scientific_role: primary_final
+freeze_manifest: configs/frozen/final_manifest.json
+freeze_sha256: __FROM_PHASE3_FREEZE__
+main_study_completion_manifest: outputs/final/main_study_completion.json
+output_root: outputs/final/robustness/budget
+population:
+  role: primary_final
+  ids_file: data/splits/final_ids.json
+  count: 7405
+  split_sha256: __FROM_PHASE3_FREEZE__
+frozen_protocol: __FROM_PHASE3_FREEZE__
+
+# Supported by the infrastructure; the preregistered publication subset is
+# intentionally unresolved until Phase 3 and the primary main study complete.
+supported_budgets: [96, 128, 160, 192]
+selected_budgets: []
+baseline_budget: __FROM_PHASE3_FREEZE__
+allowed_changed_fields: [token_budget]
+forbidden_changed_fields:
+  - method
+  - variant
+  - coefficients
+  - retrieval_depth
+  - retrieval_settings
+  - retrieval_pool
+  - generator
+  - prompt_settings
+  - decoding_settings
+  - split_role
+  - split_sha256
+
+runtime:
+  resume: true
+  overwrite: false

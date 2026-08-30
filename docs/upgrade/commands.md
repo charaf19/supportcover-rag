@@ -539,6 +539,49 @@ python -m supportcover_rag run-error-analysis --config configs/phase7_error_anal
 
 `supportcover_rag.reproducibility.verify_reproducibility()` currently validates already-loaded mappings but performs no file discovery and has no CLI. No final verification command should be claimed until Phase 9 completes.
 
+## Phase 6 robustness infrastructure
+
+Phase-6 preparation keeps budget, model, and cross-dataset robustness as three separate protocols. The templates are intentionally unresolved and contain no guessed final coefficients, model choice, or cross-dataset approval. The metadata-only readiness command does not initialize the experiment runner, Transformers, CUDA, or a generator.
+
+Focused CPU-only infrastructure verification:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_phase6_robustness.py -q
+.\.venv\Scripts\python.exe -m supportcover_rag verify-robustness-readiness
+```
+
+The readiness result is expected to be `BLOCKED` until both prerequisite manifests exist and validate. The historical `run-robustness` CLI is intentionally disabled because it predates the Phase-3 freeze boundary.
+
+### Future token-budget robustness — DEFERRED AND BLOCKED UNTIL: PHASE 3 FREEZE + PHASE 5 MAIN STUDY COMPLETION
+
+Resolve `configs/robustness_budget.template.yaml` from the canonical freeze manifest, preregister the minimal selected budget set, and preserve every frozen field except `token_budget`. Future raw runs belong under `outputs/final/robustness/budget/`. After completed runs exist, aggregate them with:
+
+```powershell
+.\.venv\Scripts\python.exe -m supportcover_rag aggregate-robustness --family budget --run-dir <BUDGET_RUN_DIR> --output outputs/final/robustness/budget_results.csv
+```
+
+Paired budget inference must use the existing `run-statistics` command because the same final IDs are evaluated at each budget.
+
+### Future model robustness — DEFERRED AND BLOCKED UNTIL: PHASE 3 FREEZE + PHASE 5 MAIN STUDY COMPLETION
+
+Resolve `configs/robustness_models.template.yaml`, explicitly preregister each generator descriptor, and preserve the frozen method, population, evidence budget, retrieval, prompt semantics, and decoding intent. Reuse validated frozen packed evidence when tokenizer provenance permits it. Future raw runs belong under `outputs/final/robustness/models/`. Aggregate completed runs with:
+
+```powershell
+.\.venv\Scripts\python.exe -m supportcover_rag aggregate-robustness --family models --run-dir <MODEL_RUN_DIR> --output outputs/final/robustness/model_results.csv
+```
+
+Paired answer-metric inference may use `run-statistics` because each model consumes the same final examples. Tokenizer-specific packed and prompt token counts must remain explicit.
+
+### Future cross-dataset robustness — DEFERRED AND BLOCKED UNTIL: PHASE 3 FREEZE + PHASE 5 MAIN STUDY COMPLETION
+
+First approve and freeze a dataset protocol in `configs/robustness_cross_dataset.template.yaml`. Record its version/revision, role, split, ID manifest, count, ID SHA, sampling rule, and provenance. Cross-dataset data is robustness-only and cannot be used for tuning. Future raw runs belong under `outputs/final/robustness/cross_dataset/`. Aggregate completed runs with:
+
+```powershell
+.\.venv\Scripts\python.exe -m supportcover_rag aggregate-robustness --family cross_dataset --run-dir <CROSS_DATASET_RUN_DIR> --output outputs/final/robustness/cross_dataset_results.csv
+```
+
+Do not treat observations from different datasets as paired. Raw robustness evidence remains under `outputs/`; publication curation into `paper_results/03_budget/` or `paper_results/04_robustness/` is deferred until real completed artifacts exist.
+
 ## Phase-gate inspection
 
 - Status: VERIFIED in Phase 0.
