@@ -543,7 +543,14 @@ def aggregate_robustness_runs(
     for field in ("split_sha256", "freeze_sha256"):
         if len({row[field] for row in rows}) != 1:
             raise ValueError(f"Robustness aggregation found mismatched {field} values.")
-    rows.sort(key=lambda row: (str(row.get("budget", "")), str(row.get("model", "")), str(row.get("dataset", ""))))
+    rows.sort(
+        key=lambda row: (
+            str(row.get("budget", "")),
+            str(row.get("model", "")),
+            str(row.get("dataset", "")),
+            str(row.get("run_id", "")),
+        )
+    )
     target = Path(output_path)
     target.parent.mkdir(parents=True, exist_ok=True)
     with target.open("w", encoding="utf-8", newline="") as handle:
