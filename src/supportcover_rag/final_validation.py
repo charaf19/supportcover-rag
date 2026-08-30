@@ -4,17 +4,23 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from supportcover_rag.config import AppConfig
 from supportcover_rag.freeze import canonical_json
 
 
 FAIR_COMPARISON_FIELDS = (
+    "dataset",
+    "split_role",
     "split_sha256",
     "model",
+    "model_revision",
+    "model_precision",
     "prompt_settings",
     "decoding_settings",
     "token_budget",
     "retrieval_depth",
-    "dataset",
+    "retrieval_parameters",
+    "seed",
 )
 
 
@@ -23,6 +29,53 @@ class FairComparisonValidation:
     methods: tuple[str, ...]
     checked_fields: tuple[str, ...]
     passed: bool = True
+
+
+def build_final_protocol_descriptor(
+    config: AppConfig,
+    *,
+    split_sha256: str,
+    method_parameters: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build shared and method-specific provenance from one resolved configuration."""
+    return {
+        "dataset": {
+            "path": config.raw_data.dataset_path,
+            "config": config.raw_data.dataset_config,
+        },
+        "split_role": config.split.role,
+        "split_sha256": split_sha256,
+        "model": config.generation.model_name_or_path,
+        "model_revision": config.generation.model_revision,
+        "model_precision": config.generation.dtype,
+        "prompt_settings": {
+            "include_titles": config.prompting.include_titles,
+            "allow_abstain": config.prompting.allow_abstain,
+            "system_instruction": config.prompting.system_instruction,
+            "user_instruction": config.prompting.user_instruction,
+        },
+        "decoding_settings": {
+            "backend": config.generation.backend,
+            "temperature": config.generation.temperature,
+            "max_new_tokens": config.generation.max_new_tokens,
+            "do_sample": config.generation.do_sample,
+            "think": config.generation.think,
+            "stream": config.generation.stream,
+        },
+        "token_budget": config.supportcover.token_budget,
+        "retrieval_depth": config.retrieval.top_k_paragraphs,
+        "retrieval_parameters": {
+            "method": config.retrieval.method,
+            "bm25_k1": config.retrieval.bm25_k1,
+            "bm25_b": config.retrieval.bm25_b,
+        },
+        "seed": config.seed,
+        "method_parameters": dict(method_parameters or {}),
+        "execution": {
+            "batch_size": config.generation.batch_size,
+            "device": config.generation.device,
+        },
+    }
 
 
 def validate_fair_comparison(

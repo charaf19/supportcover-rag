@@ -11,6 +11,14 @@ from supportcover_rag.data import acquire_hotpotqa, preprocess_raw_split
 from supportcover_rag.error_analysis import run_error_analysis as generate_error_analysis
 from supportcover_rag.environment import collect_environment_manifest
 from supportcover_rag.experiment_outputs import ExperimentFamily, VALID_EXPERIMENT_FAMILIES, parse_experiment_family
+from supportcover_rag.external_baselines import load_configured_external_compressor
+from supportcover_rag.final_execution import (
+    OPTIONAL_EXTERNAL_METHOD,
+    aggregate_final_main_runs,
+    resolve_final_main_config,
+    validate_final_execution_config,
+    verify_final_readiness,
+)
 from supportcover_rag.io_utils import read_jsonl, write_json
 from supportcover_rag.logging_utils import configure_logging
 from supportcover_rag.pipeline import ExperimentRunner, SUPPORTED_METHODS
@@ -91,6 +99,15 @@ def _resolve_split(split: str | None, config: AppConfig) -> str:
             raise typer.BadParameter("role=development is locked to the processed train split.")
         try:
             validate_development_protocol(config)
+        except (FileNotFoundError, ValueError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
+    elif config.split.role.strip().lower() == "final":
+        try:
+            validate_final_execution_config(
+                config,
+                require_external_adapter=False,
+                require_main_methods=False,
+            )
         except (FileNotFoundError, ValueError) as exc:
             raise typer.BadParameter(str(exc)) from exc
     return candidate
@@ -463,6 +480,7 @@ def run(
     ),
     notes: str = typer.Option("", help="Optional notes recorded in the experiment registry."),
     experiment_id: str | None = typer.Option(None, help="Optional explicit experiment id, for example: EXP001 or DBG001."),
+    code_revision: str | None = typer.Option(None, help="Optional source-control revision recorded as provenance."),
 ) -> None:
     _, cfg = _load_app_config(
         config,
@@ -482,16 +500,77 @@ def run(
         mmr_lambda=mmr_lambda,
     )
     resolved_split = _resolve_split(split, cfg)
+    if cfg.split.role.strip().lower() == "final":
+        validate_final_execution_config(cfg)
     split_path = Path(cfg.paths.data_root) / "processed" / f"{resolved_split}.jsonl"
-    runner = ExperimentRunner(cfg)
+    external_compressor = (
+        load_configured_external_compressor(cfg.external_compressor)
+        if OPTIONAL_EXTERNAL_METHOD in cfg.experiments.methods
+        else None
+    )
+    runner = ExperimentRunner(cfg, external_compressor=external_compressor)
     runner.run_main_suite(
         split_path=split_path,
         split_name=resolved_split,
         family=_parse_family(family, default=ExperimentFamily.MAIN) or ExperimentFamily.MAIN,
         notes=notes,
         experiment_id=experiment_id,
+        code_revision=code_revision,
     )
     LOGGER.info("Main experiment suite complete.")
+
+
+@app.command("verify-final-readiness")
+def verify_final_readiness_command(
+    template: str = typer.Option("configs/final_main.yaml", help="Unresolved final-main template."),
+    frozen_config: str = typer.Option("configs/final_frozen.yaml", help="Phase-3 frozen configuration."),
+    manifest: str = typer.Option("configs/frozen/final_manifest.json", help="Phase-3 freeze manifest."),
+    output: str | None = typer.Option(None, help="Optional metadata-only readiness report JSON."),
+) -> None:
+    report = verify_final_readiness(
+        template_path=template,
+        frozen_config_path=frozen_config,
+        manifest_path=manifest,
+        output_path=output,
+    )
+    for check in report.checks:
+        typer.echo(f"{check.name}: {'PASS' if check.passed else 'FAIL'} - {check.detail}")
+    typer.echo(f"FINAL MAIN STUDY: {'READY' if report.ready else 'BLOCKED'}")
+
+
+@app.command("resolve-final-main")
+def resolve_final_main_command(
+    template: str = typer.Option("configs/final_main.yaml", help="Unresolved final-main template."),
+    frozen_config: str = typer.Option("configs/final_frozen.yaml", help="Phase-3 frozen configuration."),
+    manifest: str = typer.Option("configs/frozen/final_manifest.json", help="Phase-3 freeze manifest."),
+    output: str = typer.Option("configs/final_main.resolved.yaml", help="Resolved final-main configuration."),
+) -> None:
+    resolve_final_main_config(
+        template_path=template,
+        frozen_config_path=frozen_config,
+        manifest_path=manifest,
+        output_path=output,
+    )
+    typer.echo(f"Resolved final main configuration: {output}")
+
+
+@app.command("aggregate-final-main")
+def aggregate_final_main_command(
+    run_dir: list[str] = typer.Option(..., "--run-dir", help="Completed final run directory; repeat per method."),
+    config: str = typer.Option("configs/final_main.resolved.yaml", help="Resolved final-main configuration."),
+    output: str = typer.Option("outputs/final/main_results.csv", help="Raw final main summary CSV."),
+) -> None:
+    cfg = load_config(config)
+    identity = validate_final_execution_config(cfg)
+    rows = aggregate_final_main_runs(
+        run_dir,
+        output_path=output,
+        expected_final_count=int(identity["final_count"]),
+        expected_final_sha256=str(identity["final_split_sha256"]),
+        expected_freeze_sha256=str(identity["freeze_sha256"]),
+        require_external=OPTIONAL_EXTERNAL_METHOD in cfg.experiments.methods,
+    )
+    typer.echo(f"Aggregated {len(rows)} complete final main runs: {output}")
 
 
 @app.command("run-statistics")

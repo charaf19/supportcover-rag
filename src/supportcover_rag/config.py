@@ -81,6 +81,7 @@ class PromptingConfig:
 class GenerationConfig:
     backend: str = "transformers"
     model_name_or_path: str = "Qwen/Qwen3-4B-Instruct-2507"
+    model_revision: str | None = None
     base_url: str = "http://localhost:11434"
     timeout_seconds: float = 120.0
     think: bool = False
@@ -92,6 +93,28 @@ class GenerationConfig:
     max_new_tokens: int = 12
     do_sample: bool = False
     trust_remote_code: bool = False
+
+
+@dataclass(slots=True)
+class ExternalCompressorConfig:
+    enabled: bool = False
+    adapter: str = ""
+    implementation_id: str = ""
+    version: str = ""
+    revision: str = ""
+    preserves_support_keys: bool = False
+    parameters: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class FinalStudyConfig:
+    expected_development_count: int = 2000
+    expected_development_sha256: str = "0e02afdcdff360d26725abe9c197a457dcbe76c92aa54338cdc146806b9ed7c6"
+    expected_final_count: int = 7405
+    expected_final_sha256: str = "fc5c4bbd3b2a0304803f118cc098eec9d78521ac7f769877774239f52a4ecf6c"
+    development_ids_file: str = "./data/splits/development_ids.json"
+    final_ids_file: str = "./data/splits/final_ids.json"
+    batch_equivalence_manifest: str = ""
 
 
 @dataclass(slots=True)
@@ -210,6 +233,8 @@ class AppConfig:
     supportcover: SupportCoverConfig = field(default_factory=SupportCoverConfig)
     prompting: PromptingConfig = field(default_factory=PromptingConfig)
     generation: GenerationConfig = field(default_factory=GenerationConfig)
+    external_compressor: ExternalCompressorConfig = field(default_factory=ExternalCompressorConfig)
+    final_study: FinalStudyConfig = field(default_factory=FinalStudyConfig)
     experiments: ExperimentsConfig = field(default_factory=ExperimentsConfig)
     ablations: AblationsConfig = field(default_factory=AblationsConfig)
     sensitivity: SensitivityConfig = field(default_factory=SensitivityConfig)
@@ -231,6 +256,8 @@ _DEF_TYPE_MAP = {
     "supportcover": SupportCoverConfig,
     "prompting": PromptingConfig,
     "generation": GenerationConfig,
+    "external_compressor": ExternalCompressorConfig,
+    "final_study": FinalStudyConfig,
     "experiments": ExperimentsConfig,
     "ablations": AblationsConfig,
     "sensitivity": SensitivityConfig,

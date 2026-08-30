@@ -10,7 +10,7 @@ from typing import Any
 import yaml
 
 from supportcover_rag.config import AppConfig
-from supportcover_rag.io_utils import append_csv_row, ensure_dir, read_csv_rows, write_csv, write_json, write_yaml
+from supportcover_rag.io_utils import ensure_dir, read_csv_rows, write_csv, write_json, write_yaml
 
 
 class ExperimentFamily(str, Enum):
@@ -30,12 +30,14 @@ REGISTRY_FIELDNAMES = [
     "timestamp",
     "status",
     "method",
+    "config_id",
     "model",
     "dataset",
     "split",
     "num_examples",
     "token_budget",
     "retrieval_depth",
+    "execution_batch_size",
     "variant",
     "answer_em",
     "answer_f1",
@@ -43,6 +45,10 @@ REGISTRY_FIELDNAMES = [
     "coverage_at_budget",
     "total_latency_ms",
     "output_dir",
+    "split_sha256",
+    "freeze_sha256",
+    "config_sha256",
+    "code_revision",
     "notes",
 ]
 
@@ -76,6 +82,7 @@ class ExperimentContext:
     experiment_id: str
     family: ExperimentFamily
     method: str
+    config_id: str
     model_alias: str
     dataset: str
     split: str
@@ -86,14 +93,17 @@ class ExperimentContext:
     timestamp: str
     output_dir: Path
     config_sha256: str | None = None
+    freeze_sha256: str | None = None
     code_revision: str | None = None
     split_sha256: str | None = None
+    execution_batch_size: int | None = None
 
     def run_metadata(self) -> dict[str, Any]:
         metadata: dict[str, Any] = {
             "experiment_id": self.experiment_id,
             "family": self.family.value,
             "method": self.method,
+            "config_id": self.config_id,
             "model_alias": self.model_alias,
             "dataset": self.dataset,
             "split": self.split,
@@ -106,8 +116,10 @@ class ExperimentContext:
         }
         optional_metadata = {
             "config_sha256": self.config_sha256,
+            "freeze_sha256": self.freeze_sha256,
             "code_revision": self.code_revision,
             "split_sha256": self.split_sha256,
+            "execution_batch_size": self.execution_batch_size,
         }
         metadata.update({key: value for key, value in optional_metadata.items() if value is not None})
         return metadata
@@ -219,6 +231,7 @@ class ExperimentOutputManager:
         notes: str = "",
         experiment_id: str | None = None,
         config_sha256: str | None = None,
+        freeze_sha256: str | None = None,
         code_revision: str | None = None,
         split_sha256: str | None = None,
     ) -> ExperimentContext:
@@ -227,6 +240,11 @@ class ExperimentOutputManager:
         resolved_id = validate_experiment_id(experiment_id, family) if experiment_id is not None else self.next_id(family)
 
         model_alias = resolve_model_alias(config.generation.model_name_or_path)
+        config_id = (
+            f"external_compressor_{config.external_compressor.implementation_id}"
+            if method == "external_compressor" and config.external_compressor.implementation_id
+            else method
+        )
         split_alias = resolve_split_alias(split_name)
         folder_name = build_run_folder_name(
             experiment_id=resolved_id,
@@ -251,9 +269,41 @@ class ExperimentOutputManager:
                 raise ValueError(f"Cannot resume {resolved_id}: resolved configuration has changed.")
             if not isinstance(existing_run, dict) or existing_run.get("experiment_id") != resolved_id:
                 raise ValueError(f"Cannot resume {resolved_id}: run metadata is missing or inconsistent.")
+            expected_run_metadata = {
+                "method": method,
+                "config_id": config_id,
+                "model_alias": model_alias,
+                "dataset": build_dataset_alias(config),
+                "split": split_alias,
+                "token_budget": token_budget,
+                "retrieval_depth": retrieval_depth,
+                "variant": variant,
+            }
+            mismatches: list[str] = []
+            for field, expected in expected_run_metadata.items():
+                actual = existing_run.get(field)
+                if field == "config_id" and actual is None:
+                    actual = existing_run.get("method")
+                if actual != expected:
+                    mismatches.append(field)
+            supplied_provenance = {
+                "config_sha256": config_sha256,
+                "freeze_sha256": freeze_sha256,
+                "split_sha256": split_sha256,
+            }
+            mismatches.extend(
+                field
+                for field, expected in supplied_provenance.items()
+                if expected is not None and existing_run.get(field) != expected
+            )
+            if mismatches:
+                raise ValueError(
+                    f"Cannot resume {resolved_id}: run provenance changed for " + ", ".join(sorted(set(mismatches)))
+                )
             timestamp = str(existing_run.get("timestamp") or datetime.now(timezone.utc).isoformat())
             notes = str(existing_run.get("notes") or notes).strip()
             config_sha256 = existing_run.get("config_sha256") or config_sha256
+            freeze_sha256 = existing_run.get("freeze_sha256") or freeze_sha256
             code_revision = existing_run.get("code_revision") or code_revision
             split_sha256 = existing_run.get("split_sha256") or split_sha256
         else:
@@ -265,6 +315,7 @@ class ExperimentOutputManager:
             experiment_id=resolved_id,
             family=family,
             method=method,
+            config_id=config_id,
             model_alias=model_alias,
             dataset=build_dataset_alias(config),
             split=split_alias,
@@ -275,8 +326,10 @@ class ExperimentOutputManager:
             timestamp=timestamp,
             output_dir=output_dir,
             config_sha256=config_sha256,
+            freeze_sha256=freeze_sha256,
             code_revision=code_revision,
             split_sha256=split_sha256,
+            execution_batch_size=config.generation.batch_size,
         )
 
     def next_id(self, family: ExperimentFamily) -> str:
@@ -309,9 +362,9 @@ class ExperimentOutputManager:
             raise ValueError(f"Registry contains duplicate experiment id: {row.get('experiment_id')}")
         if matching_indexes:
             rows[matching_indexes[0]] = {field: row.get(field, "") for field in REGISTRY_FIELDNAMES}
-            write_csv(self.registry_path, rows)
         else:
-            append_csv_row(self.registry_path, row, REGISTRY_FIELDNAMES)
+            rows.append({field: row.get(field, "") for field in REGISTRY_FIELDNAMES})
+        write_csv(self.registry_path, rows)
         write_json(self.latest_path, row)
 
     def _existing_id_numbers(self, prefix: str) -> list[int]:

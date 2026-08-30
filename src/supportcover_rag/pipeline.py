@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +18,8 @@ from supportcover_rag.experiment_outputs import (
     ExperimentOutputManager,
     merge_notes,
 )
-from supportcover_rag.external_baselines import EvidenceCompressor
+from supportcover_rag.external_baselines import EvidenceCompressor, ExternalCompressorMetadata
+from supportcover_rag.freeze import canonical_sha256
 from supportcover_rag.generation import PromptInput, build_generator, build_token_counter
 from supportcover_rag.io_utils import append_jsonl_rows, ensure_dir, read_jsonl, write_csv, write_json
 from supportcover_rag.logging_utils import attach_run_log
@@ -114,6 +115,7 @@ class ExperimentRunner:
         retrieval_latency_ms = (time.perf_counter() - retrieval_start) * 1000.0
 
         packing_start = time.perf_counter()
+        external_metadata: ExternalCompressorMetadata | None = None
         if method == "external_compressor":
             if self.external_compressor is None:
                 raise RuntimeError("The external_compressor method requires an injected EvidenceCompressor adapter.")
@@ -125,10 +127,19 @@ class ExperimentRunner:
             )
             if not isinstance(packed, PackedEvidence):
                 raise TypeError("EvidenceCompressor.compress() must return PackedEvidence.")
+            if packed.token_budget != token_budget:
+                raise ValueError(
+                    f"External compressor returned token_budget={packed.token_budget}; expected {token_budget}."
+                )
             if packed.used_tokens > token_budget:
                 raise ValueError(
                     f"External compressor exceeded the token budget: {packed.used_tokens} > {token_budget}."
                 )
+            if len(packed.support_keys) != len(set(packed.support_keys)):
+                raise ValueError("External compressor returned duplicate support keys.")
+            metadata_value = getattr(self.external_compressor, "metadata", None)
+            if isinstance(metadata_value, ExternalCompressorMetadata):
+                external_metadata = metadata_value
         elif method == "no_rag":
             packed = PackedEvidence(method=method, selected=[], token_budget=token_budget)
             candidates = []
@@ -161,7 +172,11 @@ class ExperimentRunner:
                 selector = apply_variant(SupportCoverSelector(self.config.supportcover), variant=variant)
                 packed = selector.select(candidates, token_budget=token_budget)
             elif method == "supportcover_final":
-                canonical_variant = self.config.robustness.supportcover_final_variant
+                canonical_variant = (
+                    "full"
+                    if self.config.split.role.strip().lower() == "final"
+                    else self.config.robustness.supportcover_final_variant
+                )
                 selector = apply_variant(SupportCoverSelector(self.config.supportcover), variant=canonical_variant)
                 packed = selector.select(candidates, token_budget=token_budget)
             else:
@@ -173,6 +188,17 @@ class ExperimentRunner:
             "num_candidates": len(candidates),
             "variant": variant,
         }
+        if method == "external_compressor":
+            metadata["support_metrics_supported"] = (
+                external_metadata.preserves_support_keys if external_metadata is not None else True
+            )
+            if external_metadata is not None:
+                metadata["external_compressor"] = {
+                    "implementation_id": external_metadata.implementation_id,
+                    "version": external_metadata.version,
+                    "revision": external_metadata.revision,
+                    "preserves_support_keys": external_metadata.preserves_support_keys,
+                }
         return packed, retrieval_latency_ms, packing_latency_ms, metadata
 
     def _prepare_prediction(
@@ -210,7 +236,12 @@ class ExperimentRunner:
         generation_latency_ms: float,
     ) -> PredictionRecord:
         example = prepared.example
-        support = support_metrics(prepared.packed.support_keys, example.supporting_facts)
+        support_metrics_supported = prepared.metadata.get("support_metrics_supported", True) is not False
+        support = (
+            support_metrics(prepared.packed.support_keys, example.supporting_facts)
+            if support_metrics_supported
+            else {"support_em": None, "support_precision": None, "support_recall": None, "support_f1": None}
+        )
         return PredictionRecord(
             example_id=example.example_id,
             method=method,
@@ -226,7 +257,11 @@ class ExperimentRunner:
             support_precision=support["support_precision"],
             support_recall=support["support_recall"],
             support_f1=support["support_f1"],
-            coverage_at_budget=coverage_at_budget(prepared.packed.support_keys, example.supporting_facts),
+            coverage_at_budget=(
+                coverage_at_budget(prepared.packed.support_keys, example.supporting_facts)
+                if support_metrics_supported
+                else None
+            ),
             evidence_tokens=prepared.packed.used_tokens,
             retrieval_latency_ms=prepared.retrieval_latency_ms,
             packing_latency_ms=prepared.packing_latency_ms,
@@ -299,20 +334,21 @@ class ExperimentRunner:
     def _build_run_payload(
         self,
         context: ExperimentContext,
-        metrics: dict[str, float | int | str] | None,
+        metrics: dict[str, float | int | str | None] | None,
         *,
         status: str,
         notes: str,
-    ) -> dict[str, float | int | str]:
+    ) -> dict[str, float | int | str | None]:
         data = metrics or {}
         default_count: int | str = 0 if status == "completed" else ""
         default_metric: float | str = 0.0 if status == "completed" else ""
-        payload: dict[str, float | int | str] = {
+        payload: dict[str, float | int | str | None] = {
             "experiment_id": context.experiment_id,
             "family": context.family.value,
             "timestamp": context.timestamp,
             "status": status,
             "method": context.method,
+            "config_id": context.config_id,
             "model": context.model_alias,
             "dataset": context.dataset,
             "split": context.split,
@@ -338,8 +374,10 @@ class ExperimentRunner:
         }
         optional_provenance = {
             "config_sha256": context.config_sha256,
+            "freeze_sha256": context.freeze_sha256,
             "code_revision": context.code_revision,
             "split_sha256": context.split_sha256,
+            "execution_batch_size": context.execution_batch_size,
         }
         payload.update(
             {key: value for key, value in optional_provenance.items() if value is not None}
@@ -554,6 +592,10 @@ class ExperimentRunner:
     ) -> dict[str, float | int | str]:
         explicit_ids, split_sha256 = self._configured_explicit_ids()
         resolved_config_sha256 = self._resolved_frozen_config_sha256(config_sha256)
+        final_role = self.config.split.role.strip().lower() == "final"
+        freeze_sha256 = resolved_config_sha256 if final_role else None
+        if final_role:
+            resolved_config_sha256 = canonical_sha256(asdict(self.config))
         context = self.output_manager.prepare_run(
             config=self.config,
             family=family,
@@ -565,6 +607,7 @@ class ExperimentRunner:
             notes=notes,
             experiment_id=experiment_id,
             config_sha256=resolved_config_sha256,
+            freeze_sha256=freeze_sha256,
             code_revision=code_revision,
             split_sha256=split_sha256,
         )
@@ -598,12 +641,14 @@ class ExperimentRunner:
                 write_json(target_dir / "metrics.json", payload)
                 write_csv(target_dir / "summary.csv", [payload])
                 self.output_manager.append_registry_row(payload)
+                support_f1 = payload["support_f1"]
+                coverage = payload["coverage_at_budget"]
                 LOGGER.info(
-                    "Experiment complete | id=%s | answer_f1=%.4f | support_f1=%.4f | coverage_at_budget=%.4f | total_latency_ms=%.2f",
+                    "Experiment complete | id=%s | answer_f1=%.4f | support_f1=%s | coverage_at_budget=%s | total_latency_ms=%.2f",
                     context.experiment_id,
                     float(payload["answer_f1"]),
-                    float(payload["support_f1"]),
-                    float(payload["coverage_at_budget"]),
+                    "NA" if support_f1 is None else f"{float(support_f1):.4f}",
+                    "NA" if coverage is None else f"{float(coverage):.4f}",
                     float(payload["total_latency_ms"]),
                 )
                 return payload

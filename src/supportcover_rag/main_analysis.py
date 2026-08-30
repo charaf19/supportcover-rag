@@ -12,6 +12,7 @@ from supportcover_rag.types import PredictionRecord
 
 SUPPORTCOVER_METHOD = "supportcover_final"
 PAIRED_COMPARATORS = (
+    "paragraph_topk",
     "relevance_only",
     "mmr_sentence",
     "greedy_query_cover",
@@ -21,13 +22,14 @@ DEFAULT_PAIRED_METRICS = (
     "answer_em",
     "answer_f1",
     "support_f1",
+    "support_recall",
     "coverage_at_budget",
 )
 
 
 @dataclass(frozen=True, slots=True)
 class MainAnalysisResult:
-    aggregates: dict[str, dict[str, float | int | str]]
+    aggregates: dict[str, dict[str, float | int | str | None]]
     comparisons: list[dict[str, float | int | str]]
     fair_comparison: FairComparisonValidation | None = None
 
@@ -55,6 +57,13 @@ def _metric_extractor(metric: str):
     return extract
 
 
+def _metric_available(records: Sequence[Mapping[str, Any]], metric: str) -> bool:
+    availability = [record.get(metric) is not None for record in records]
+    if any(availability) and not all(availability):
+        raise ValueError(f"Metric '{metric}' is inconsistently available within one method population.")
+    return all(availability)
+
+
 def analyze_main_predictions(
     predictions_by_method: Mapping[str, Sequence[Mapping[str, Any] | PredictionRecord]],
     *,
@@ -65,6 +74,7 @@ def analyze_main_predictions(
     permutations: int = 10_000,
     seed: int = 42,
 ) -> MainAnalysisResult:
+    """Historical in-memory aggregation; publication artifacts use run-statistics."""
     missing_methods = [
         method
         for method in (SUPPORTCOVER_METHOD, *PAIRED_COMPARATORS)
@@ -107,6 +117,11 @@ def analyze_main_predictions(
     for comparator in PAIRED_COMPARATORS:
         comparator_records = normalized[comparator]
         for metric in metrics:
+            if not _metric_available(supportcover_records, metric) or not _metric_available(
+                comparator_records,
+                metric,
+            ):
+                continue
             comparisons.append(
                 build_comparison_row(
                     metric=metric,

@@ -377,20 +377,61 @@ Every manifest entry records source paths, source SHA-256 values, artifact SHA-2
 
 ### Main unseen study
 
-- Status: BLOCKED; MUST NOT RUN before the Phase 3 freeze and Phase 4 statistics gate.
+- Status: BLOCKED UNTIL PHASE 3 FREEZE.
 - Working directory: repository root.
 - Required inputs: `data/processed/validation.jsonl`, `data/splits/final_ids.json`, `configs/frozen/final_manifest.json`, resolved non-null frozen settings, the selected external compressor adapter, model files, and suitable hardware.
-- Expected outputs: per-method raw predictions and resolved metadata under `outputs/main/`, followed by final aggregate/statistics artifacts.
-- Cost: very expensive; target population is at least 1,000 generated examples and preferably 2,000+ or full validation.
-- Phase availability: Phase 5 only.
+- Expected outputs: one directory per method under `outputs/final/main/`, then `outputs/final/main_results.csv`.
+- Cost: very expensive; the frozen final population is all 7,405 examples per method.
+- Phase availability: infrastructure verification only until Phase 3 freezes.
 
-The current CLI shape is:
+Focused Phase-5 infrastructure tests (CPU-only, synthetic fixtures):
 
 ```powershell
-python -m supportcover_rag run --config configs/final_main.yaml
+.\.venv\Scripts\python.exe -m pytest tests/test_phase5_infrastructure.py tests/test_packing_baselines.py tests/test_experiment_outputs.py -q
 ```
 
-This command is documented for future verification only. The current config intentionally contains unresolved `null` frozen fields and references missing assets, so it is not executable as a valid final study.
+Safe metadata-only readiness inspection now; the expected result is `FINAL MAIN STUDY: BLOCKED` while Phase 3 and the external compressor remain unresolved:
+
+```powershell
+.\.venv\Scripts\python.exe -m supportcover_rag verify-final-readiness --template configs/final_main.yaml --frozen-config configs/final_frozen.yaml --manifest configs/frozen/final_manifest.json
+```
+
+The verifier reads only configuration, freeze metadata, and frozen ID identity/count/hash. It never reads final examples, answers, contexts, supporting facts, predictions, or outcomes, and it never initializes a generator.
+
+#### Resolve the final configuration — BLOCKED UNTIL PHASE 3 FREEZE
+
+This deterministic resolver takes scientific settings from the Phase-3 frozen config/manifest and execution-only settings from the final-main template. It refuses null parameters, hash/count/role failures, split overlap, an unverified batch-size change, or an unavailable external adapter.
+
+```powershell
+.\.venv\Scripts\python.exe -m supportcover_rag resolve-final-main --template configs/final_main.yaml --frozen-config configs/final_frozen.yaml --manifest configs/frozen/final_manifest.json --output configs/final_main.resolved.yaml
+```
+
+#### Final generation — BLOCKED UNTIL PHASE 3 FREEZE AND A REAL MODERN COMPRESSOR IS PREREGISTERED
+
+The resolved config uses `runtime.resume=true`, `runtime.overwrite=false`, the full frozen validation population, and `outputs/final/main/`. The command runs only the preregistered primary method set; `no_rag` and `random_sentence` are excluded.
+
+```powershell
+$CodeRevision = git rev-parse HEAD
+.\.venv\Scripts\python.exe -m supportcover_rag run --config configs/final_main.resolved.yaml --family main --code-revision $CodeRevision --notes "Frozen unseen main study"
+```
+
+#### Final main aggregation — BLOCKED UNTIL ALL FINAL METHOD RUNS COMPLETE
+
+Pass each completed method directory once. The aggregator rejects incomplete runs, missing methods, mismatched split/freeze hashes, wrong counts, duplicate prediction IDs, and duplicate methods.
+
+```powershell
+.\.venv\Scripts\python.exe -m supportcover_rag aggregate-final-main `
+  --config configs/final_main.resolved.yaml `
+  --run-dir outputs/final/main/REPLACE_PARAGRAPH_TOPK_RUN `
+  --run-dir outputs/final/main/REPLACE_RELEVANCE_ONLY_RUN `
+  --run-dir outputs/final/main/REPLACE_MMR_RUN `
+  --run-dir outputs/final/main/REPLACE_GREEDY_QUERY_COVER_RUN `
+  --run-dir outputs/final/main/REPLACE_SUPPORTCOVER_FINAL_RUN `
+  --run-dir outputs/final/main/REPLACE_EXTERNAL_COMPRESSOR_RUN `
+  --output outputs/final/main_results.csv
+```
+
+Raw final predictions and statistics remain under `outputs/`. Export to `paper_results/02_main/` is deferred until genuine main results and paired statistics exist.
 
 ### Robustness commands
 

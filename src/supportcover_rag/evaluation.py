@@ -56,7 +56,7 @@ def coverage_at_budget(predicted: Iterable[SupportKey], gold: Iterable[SupportKe
     return len(pred_set & gold_set) / len(gold_set)
 
 
-def aggregate_records(records: list[PredictionRecord]) -> dict[str, float | int | str]:
+def aggregate_records(records: list[PredictionRecord]) -> dict[str, float | int | str | None]:
     if not records:
         return {"num_examples": 0}
     return {
@@ -65,11 +65,11 @@ def aggregate_records(records: list[PredictionRecord]) -> dict[str, float | int 
         "num_examples": len(records),
         "answer_em": mean(r.answer_em for r in records),
         "answer_f1": mean(r.answer_f1 for r in records),
-        "support_em": mean(r.support_em for r in records),
-        "support_precision": mean(r.support_precision for r in records),
-        "support_recall": mean(r.support_recall for r in records),
-        "support_f1": mean(r.support_f1 for r in records),
-        "coverage_at_budget": mean(r.coverage_at_budget for r in records),
+        "support_em": _optional_mean([r.support_em for r in records]),
+        "support_precision": _optional_mean([r.support_precision for r in records]),
+        "support_recall": _optional_mean([r.support_recall for r in records]),
+        "support_f1": _optional_mean([r.support_f1 for r in records]),
+        "coverage_at_budget": _optional_mean([r.coverage_at_budget for r in records]),
         "evidence_tokens": mean(r.evidence_tokens for r in records),
         "retrieval_latency_ms": mean(r.retrieval_latency_ms for r in records),
         "packing_latency_ms": mean(r.packing_latency_ms for r in records),
@@ -77,3 +77,12 @@ def aggregate_records(records: list[PredictionRecord]) -> dict[str, float | int 
         "total_latency_ms": mean(r.total_latency_ms for r in records),
         "peak_rss_mb": mean(r.peak_rss_mb for r in records),
     }
+
+
+def _optional_mean(values: list[float | None]) -> float | None:
+    available = [value for value in values if value is not None]
+    if not available:
+        return None
+    if len(available) != len(values):
+        raise ValueError("Metric availability must be consistent across a prediction population.")
+    return mean(available)

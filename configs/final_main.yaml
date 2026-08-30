@@ -1,9 +1,13 @@
 seed: 42
 
+paths:
+  data_root: ./data
+  output_root: ./outputs/final
+
 runtime:
   limit: null
   overwrite: false
-  resume: false
+  resume: true
 
 freeze:
   manifest_file: ./configs/frozen/final_manifest.json
@@ -42,6 +46,7 @@ prompting:
 generation:
   backend: transformers
   model_name_or_path: Qwen/Qwen3-4B-Instruct-2507
+  model_revision: null
   think: false
   stream: false
   device: auto
@@ -52,8 +57,28 @@ generation:
   do_sample: false
   trust_remote_code: false
 
+# Publication baseline remains deliberately unresolved until a specific modern
+# compressor, version, revision, and support-key capability are preregistered.
+external_compressor:
+  enabled: false
+  adapter: ""
+  implementation_id: ""
+  version: ""
+  revision: ""
+  preserves_support_keys: false
+  parameters: {}
+
+final_study:
+  expected_development_count: 2000
+  expected_development_sha256: 0e02afdcdff360d26725abe9c197a457dcbe76c92aa54338cdc146806b9ed7c6
+  expected_final_count: 7405
+  expected_final_sha256: fc5c4bbd3b2a0304803f118cc098eec9d78521ac7f769877774239f52a4ecf6c
+  development_ids_file: ./data/splits/development_ids.json
+  final_ids_file: ./data/splits/final_ids.json
+  batch_equivalence_manifest: ""
+
 experiments:
-  split: final
+  split: validation
   methods:
     - paragraph_topk
     - relevance_only

@@ -106,11 +106,11 @@ class PredictionRecord:
     predicted_supporting_facts: list[SupportKey]
     answer_em: float
     answer_f1: float
-    support_em: float
-    support_precision: float
-    support_recall: float
-    support_f1: float
-    coverage_at_budget: float
+    support_em: float | None
+    support_precision: float | None
+    support_recall: float | None
+    support_f1: float | None
+    coverage_at_budget: float | None
     evidence_tokens: int
     retrieval_latency_ms: float
     packing_latency_ms: float
