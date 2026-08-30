@@ -35,6 +35,31 @@ class RetrievedParagraph:
     text: str
     rank: int
     score: float
+    corpus_id: str | None = None
+    document_id: str | None = None
+    paragraph_id: str | None = None
+    source_dataset: str | None = None
+    source_split: str | None = None
+    source_record_id: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class CorpusParagraph:
+    corpus_id: str
+    document_id: str
+    paragraph_id: str
+    title: str
+    sentences: tuple[str, ...]
+    source_dataset: str
+    source_split: str
+    source_record_id: str | None = None
+    source_revision: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def text(self) -> str:
+        return " ".join(sentence.strip() for sentence in self.sentences if sentence.strip())
 
 
 @dataclass(slots=True)

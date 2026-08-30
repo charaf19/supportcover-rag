@@ -49,6 +49,10 @@ class SplitConfig:
 @dataclass(slots=True)
 class RetrievalConfig:
     method: str = "bm25"
+    evaluation_mode: str = "controlled_context"
+    corpus_manifest: str = ""
+    index_path: str = ""
+    tokenizer_identity: str = "supportcover_rag.text.tokenize:v1"
     top_k_paragraphs: int = 5
     bm25_k1: float = 1.5
     bm25_b: float = 0.75

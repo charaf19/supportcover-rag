@@ -20,6 +20,8 @@ FAIR_COMPARISON_FIELDS = (
     "token_budget",
     "retrieval_depth",
     "retrieval_parameters",
+    "retrieval_mode",
+    "retrieval_corpus",
     "seed",
 )
 
@@ -68,6 +70,12 @@ def build_final_protocol_descriptor(
             "method": config.retrieval.method,
             "bm25_k1": config.retrieval.bm25_k1,
             "bm25_b": config.retrieval.bm25_b,
+        },
+        "retrieval_mode": config.retrieval.evaluation_mode,
+        "retrieval_corpus": {
+            "manifest": config.retrieval.corpus_manifest or None,
+            "index": config.retrieval.index_path or None,
+            "tokenizer_identity": config.retrieval.tokenizer_identity,
         },
         "seed": config.seed,
         "method_parameters": dict(method_parameters or {}),

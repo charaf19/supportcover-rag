@@ -73,8 +73,16 @@ FINAL_STUDY_PLAN: tuple[StudyStage, ...] = (
     StudyStage(
         order=8,
         name="global_retrieval_evaluation",
-        depends_on=("protocol_integrity",),
-        requires=("deterministic_global_corpus", "global_corpus_sha256", "canonical_gold_support"),
+        depends_on=("protocol_integrity", "frozen_configuration_validation"),
+        requires=(
+            "frozen_config_sha256",
+            "resolved_global_retrieval_protocol",
+            "deterministic_global_corpus",
+            "global_corpus_sha256",
+            "global_index_corpus_binding",
+            "global_retrieval_query_role",
+            "canonical_gold_support",
+        ),
         produces=("global_retrieval_diagnostics", "global_retrieval_metrics"),
     ),
     StudyStage(

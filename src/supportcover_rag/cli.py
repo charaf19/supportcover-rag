@@ -30,6 +30,10 @@ from supportcover_rag.phase3 import (
     validate_development_protocol,
 )
 from supportcover_rag.robustness import aggregate_robustness_runs, verify_robustness_readiness
+from supportcover_rag.retrieval_realism import (
+    aggregate_retrieval_diagnostics,
+    verify_retrieval_readiness,
+)
 from supportcover_rag.splits import (
     build_record_strata,
     build_split_manifest,
@@ -691,6 +695,38 @@ def verify_robustness_readiness_command(
     for check in report.checks:
         typer.echo(f"{check.name}: {'PASS' if check.passed else 'FAIL'} - {check.detail}")
     typer.echo(f"ROBUSTNESS EXECUTION: {'READY' if report.ready else 'BLOCKED'}")
+
+
+@app.command("verify-retrieval-readiness")
+def verify_retrieval_readiness_command(
+    protocol: str = typer.Option(
+        "configs/retrieval_global.template.yaml", help="Global retrieval protocol template or resolved plan."
+    ),
+    freeze_manifest: str = typer.Option(
+        "configs/frozen/final_manifest.json", help="Phase-3 freeze manifest."
+    ),
+    output: str | None = typer.Option(None, help="Optional metadata-only readiness report JSON."),
+) -> None:
+    report = verify_retrieval_readiness(
+        protocol_path=protocol,
+        freeze_manifest_path=freeze_manifest,
+        output_path=output,
+    )
+    for check in report.checks:
+        typer.echo(f"{check.name}: {'PASS' if check.passed else 'FAIL'} - {check.detail}")
+    typer.echo(f"GLOBAL RETRIEVAL EXECUTION: {'READY' if report.ready else 'BLOCKED'}")
+
+
+@app.command("aggregate-retrieval")
+def aggregate_retrieval_command(
+    per_example: str = typer.Option(..., help="Completed per-example retrieval diagnostics JSONL."),
+    output: str = typer.Option(
+        "outputs/final/retrieval/global_retrieval_metrics.csv",
+        help="Generator-free aggregate retrieval metrics CSV.",
+    ),
+) -> None:
+    aggregate = aggregate_retrieval_diagnostics(per_example, output_path=output)
+    typer.echo(f"Aggregated {aggregate['N']} retrieval diagnostics: {output}")
 
 
 @app.command("aggregate-robustness")

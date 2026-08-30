@@ -13,6 +13,7 @@ import yaml
 from supportcover_rag.config import AppConfig, ExternalCompressorConfig, load_config
 from supportcover_rag.freeze import canonical_sha256
 from supportcover_rag.io_utils import read_jsonl, write_csv, write_json, write_yaml
+from supportcover_rag.retrieval import CONTROLLED_CONTEXT, validate_retrieval_mode
 from supportcover_rag.splits import load_json_ids, ordered_ids_sha256, validate_disjoint_splits, validate_unique_ids
 
 
@@ -170,6 +171,15 @@ def validate_final_execution_config(
     require_main_methods: bool = True,
 ) -> dict[str, Any]:
     """Fail closed using only config, manifest, and frozen ID identity metadata."""
+    validate_retrieval_mode(
+        config.retrieval.evaluation_mode,
+        corpus_manifest=config.retrieval.corpus_manifest,
+    )
+    if config.retrieval.evaluation_mode != CONTROLLED_CONTEXT:
+        raise ValueError(
+            "The primary final study is the controlled_context post-retrieval packing evaluation; "
+            "global_corpus evaluation uses the separate Phase-7 protocol."
+        )
     if config.split.role.strip().lower() != "final":
         raise ValueError("Final execution requires split.role='final'.")
     if config.runtime.limit is not None:

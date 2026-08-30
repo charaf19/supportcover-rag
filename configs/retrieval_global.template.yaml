@@ -1,0 +1,44 @@
+schema_version: 1
+evaluation_role: global_retrieval_evaluation
+tuning_permitted: false
+
+freeze_manifest: configs/frozen/final_manifest.json
+freeze_sha256: __FROM_PHASE3_FREEZE__
+frozen_supportcover_protocol: __FROM_PHASE3_FREEZE__
+
+query_population:
+  role: global_retrieval_evaluation
+  ids_file: data/splits/final_ids.json
+  count: 7405
+  sha256: __FROM_PHASE3_FREEZE__
+
+retrieval:
+  evaluation_mode: global_corpus
+  method: bm25
+  corpus_manifest: __PREREGISTER_LATER__
+  index_path: __PREREGISTER_LATER__
+  tokenizer_identity: supportcover_rag.text.tokenize:v1
+  top_k: __PREREGISTER_LATER__
+  bm25_k1: 1.5
+  bm25_b: 0.75
+
+corpus_protocol:
+  construction_protocol: __PREREGISTER_LATER__
+  # Must resolve explicitly to benchmark_defined_corpus,
+  # frozen_union_of_benchmark_contexts, or externally_defined_corpus.
+  dataset_identity: __PREREGISTER_LATER__
+  dataset_version_or_config: __PREREGISTER_LATER__
+  source_splits: __PREREGISTER_LATER__
+  source_revision: __PREREGISTER_LATER__
+  deduplication_rule: __PREREGISTER_LATER__
+  normalization_rule: __PREREGISTER_LATER__
+  ordering_rule: __PREREGISTER_LATER__
+  construction_inputs: [source_text, source_identity, source_provenance]
+  forbidden_selection_inputs:
+    - gold_answers
+    - support_annotations
+    - answer_f1
+    - retrieval_outcomes
+
+output_root: outputs/final/retrieval
+paper_output_root: paper_results/05_retrieval

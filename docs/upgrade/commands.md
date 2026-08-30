@@ -582,6 +582,43 @@ First approve and freeze a dataset protocol in `configs/robustness_cross_dataset
 
 Do not treat observations from different datasets as paired. Raw robustness evidence remains under `outputs/`; publication curation into `paper_results/03_budget/` or `paper_results/04_robustness/` is deferred until real completed artifacts exist.
 
+## Phase 7 retrieval realism infrastructure
+
+The existing `BM25ParagraphRetriever` is explicitly the `controlled_context` mode: it ranks only the paragraphs supplied in each HotpotQA distractor context. It remains a valid post-retrieval evidence-packing experiment and must not be described as corpus-global retrieval.
+
+Focused CPU-only verification:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_phase7_retrieval.py -q
+.\.venv\Scripts\python.exe -m supportcover_rag verify-retrieval-readiness
+```
+
+The readiness command is metadata-only and does not instantiate `ExperimentRunner`, Transformers, Qwen, or CUDA. Its current expected result is `GLOBAL RETRIEVAL EXECUTION: BLOCKED`.
+
+### Future corpus construction — DEFERRED / BLOCKED UNTIL THE RETRIEVAL PROTOCOL AND REQUIRED SCIENTIFIC GATES ARE FROZEN
+
+Resolve `configs/retrieval_global.template.yaml` by explicitly choosing a benchmark-defined corpus, a frozen union of named benchmark contexts, or another externally defined corpus. Record dataset identity/version, source splits, revision, deduplication, normalization, canonical ordering, document and paragraph counts, corpus artifact SHA, and code revision. A union of benchmark contexts must be labeled exactly that; it is not open-world Wikipedia retrieval.
+
+No corpus construction command is authorized or provided during Phase-7 infrastructure preparation.
+
+### Future index construction — DEFERRED / BLOCKED UNTIL THE RETRIEVAL PROTOCOL AND REQUIRED SCIENTIFIC GATES ARE FROZEN
+
+Build the deterministic global BM25 index once from the canonical corpus order. Persist the corpus SHA, implementation/schema, tokenizer identity, `k1`, `b`, precomputed document frequencies, average document length, and index SHA under `outputs/retrieval/index/`. Loading against another corpus SHA must fail.
+
+No index-building command is authorized or provided during Phase-7 infrastructure preparation.
+
+### Future generator-free retrieval evaluation — DEFERRED / BLOCKED UNTIL THE RETRIEVAL PROTOCOL AND REQUIRED SCIENTIFIC GATES ARE FROZEN
+
+After readiness passes, the CPU-only retrieval path will write per-example diagnostics and aggregate paragraph-retrieval metrics under `outputs/final/retrieval/`. It intentionally excludes generated answers. The same frozen retrieved-candidate cache must feed every evidence packer so downstream differences remain attributable to packing.
+
+### Future retrieval aggregation — DEFERRED / BLOCKED UNTIL THE RETRIEVAL PROTOCOL AND REQUIRED SCIENTIFIC GATES ARE FROZEN
+
+Aggregate only records with matching corpus SHA, query-population SHA, retrieval method/parameters, tokenizer, and `top_k`. Keep paragraph retrieval metrics separate from sentence-level packing support metrics. Curated publication export to `paper_results/05_retrieval/` remains deferred until real scientific artifacts exist.
+
+```powershell
+.\.venv\Scripts\python.exe -m supportcover_rag aggregate-retrieval --per-example outputs/final/retrieval/per_example_retrieval.jsonl --output outputs/final/retrieval/global_retrieval_metrics.csv
+```
+
 ## Phase-gate inspection
 
 - Status: VERIFIED in Phase 0.

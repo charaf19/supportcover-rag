@@ -33,7 +33,7 @@ from supportcover_rag.packing import (
     pack_random,
     pack_relevance_only,
 )
-from supportcover_rag.retrieval import BM25ParagraphRetriever
+from supportcover_rag.retrieval import build_paragraph_retriever
 from supportcover_rag.splits import load_json_ids, ordered_ids_sha256, validate_unique_ids
 from supportcover_rag.types import HotpotExample, PackedEvidence, PredictionRecord
 
@@ -65,7 +65,13 @@ class ExperimentRunner:
     def __init__(self, config: AppConfig, *, external_compressor: EvidenceCompressor | None = None) -> None:
         self.config = config
         self.external_compressor = external_compressor
-        self.retriever = BM25ParagraphRetriever(
+        if config.retrieval.evaluation_mode != "controlled_context":
+            raise ValueError(
+                "ExperimentRunner preserves the controlled_context study. "
+                "Use the generator-free global retrieval path for evaluation_mode='global_corpus'."
+            )
+        self.retriever = build_paragraph_retriever(
+            evaluation_mode=config.retrieval.evaluation_mode,
             k1=config.retrieval.bm25_k1,
             b=config.retrieval.bm25_b,
         )
@@ -111,7 +117,12 @@ class ExperimentRunner:
         variant: str = "full",
     ) -> tuple[PackedEvidence, float, float, dict[str, object]]:
         retrieval_start = time.perf_counter()
-        retrieved = self.retriever.retrieve(example=example, top_k=retrieval_depth)
+        retrieved = self.retriever.retrieve(
+            question=example.question,
+            context=example.context,
+            query_id=example.example_id,
+            top_k=retrieval_depth,
+        )
         retrieval_latency_ms = (time.perf_counter() - retrieval_start) * 1000.0
 
         packing_start = time.perf_counter()
@@ -184,6 +195,8 @@ class ExperimentRunner:
         packing_latency_ms = (time.perf_counter() - packing_start) * 1000.0
 
         metadata = {
+            "retrieval_mode": self.config.retrieval.evaluation_mode,
+            "retrieved_paragraph_ids": [paragraph.paragraph_id for paragraph in retrieved],
             "retrieved_titles": [paragraph.title for paragraph in retrieved],
             "num_candidates": len(candidates),
             "variant": variant,
