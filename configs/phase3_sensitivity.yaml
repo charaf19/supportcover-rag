@@ -53,7 +53,7 @@ generation:
   model_name_or_path: Qwen/Qwen3-4B-Instruct-2507
   device: cuda
   dtype: float16
-  batch_size: 1
+  batch_size: 2
   temperature: 0.0
   max_new_tokens: 12
   do_sample: false
@@ -90,3 +90,4 @@ ablations:
     - no_title_gain
     - no_redundancy
     - no_token_penalty
+
