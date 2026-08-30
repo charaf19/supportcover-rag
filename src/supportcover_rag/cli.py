@@ -30,6 +30,7 @@ from supportcover_rag.splits import (
     validate_disjoint_splits,
     validate_unique_ids,
 )
+from supportcover_rag.statistics_artifacts import run_statistics_plan
 from supportcover_rag.systems_summary import run_systems_summary as generate_systems_summary
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
@@ -491,6 +492,22 @@ def run(
         experiment_id=experiment_id,
     )
     LOGGER.info("Main experiment suite complete.")
+
+
+@app.command("run-statistics")
+def run_statistics(
+    plan: str = typer.Option(..., help="Path to a paired-statistics plan JSON."),
+    output_dir: str | None = typer.Option(
+        None,
+        help="Optional output directory override. Defaults to outputs/statistics under the plan project root.",
+    ),
+) -> None:
+    artifacts = run_statistics_plan(plan, output_dir=output_dir)
+    typer.echo(
+        "Completed paired statistics artifacts: "
+        f"{artifacts['method_summary']}, {artifacts['paired_comparisons']}, "
+        f"{artifacts['statistics_manifest']}"
+    )
 
 
 @app.command("run-ablations")

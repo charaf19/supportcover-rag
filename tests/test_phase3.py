@@ -14,10 +14,12 @@ from supportcover_rag.config import (
     DevelopmentTuningConfig,
     ExperimentsConfig,
     PathsConfig,
+    RuntimeConfig,
     SensitivityConfig,
     SplitConfig,
 )
 from supportcover_rag.generation import WhitespaceTokenCounter
+from supportcover_rag.experiment_outputs import ExperimentFamily, ExperimentOutputManager
 from supportcover_rag.io_utils import read_csv_rows, read_jsonl, write_csv, write_json, write_jsonl, write_yaml
 from supportcover_rag.phase3 import (
     CANONICAL_COMPONENT_VARIANTS,
@@ -298,3 +300,44 @@ def test_generation_aggregation_validates_shortlist_and_run_provenance(tmp_path,
     assert [row["config_id"] for row in rows] == ["supportcover_beta_coverage_1.2", "mmr_lambda_0.5"]
     assert len(read_csv_rows(output_path)) == 2
     assert all(row["source_predictions_sha256"] for row in rows)
+
+
+def test_explicit_experiment_id_can_resume_without_duplicate_registry_rows(tmp_path):
+    config = AppConfig(
+        paths=PathsConfig(output_root=str(tmp_path / "outputs")),
+        runtime=RuntimeConfig(resume=True, overwrite=False),
+    )
+    manager = ExperimentOutputManager(config.paths.output_root)
+    context = manager.prepare_run(
+        config=config,
+        family=ExperimentFamily.BASELINE,
+        method="supportcover",
+        split_name="train",
+        token_budget=160,
+        retrieval_depth=5,
+        variant="full",
+        experiment_id="EXP001",
+        split_sha256=config.development_tuning.expected_development_sha256,
+    )
+    context.output_dir.mkdir(parents=True)
+    manager.write_config_snapshot(context.output_dir / "config.resolved.yaml", config, context)
+    manager.append_registry_row({"experiment_id": "EXP001", "status": "failed"})
+
+    resumed = manager.prepare_run(
+        config=config,
+        family=ExperimentFamily.BASELINE,
+        method="supportcover",
+        split_name="train",
+        token_budget=160,
+        retrieval_depth=5,
+        variant="full",
+        experiment_id="EXP001",
+        split_sha256=config.development_tuning.expected_development_sha256,
+    )
+    manager.append_registry_row({"experiment_id": "EXP001", "status": "completed"})
+
+    assert resumed.output_dir == context.output_dir
+    assert resumed.timestamp == context.timestamp
+    registry = read_csv_rows(manager.registry_path)
+    assert len(registry) == 1
+    assert registry[0]["status"] == "completed"

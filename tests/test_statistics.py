@@ -9,6 +9,8 @@ from supportcover_rag.statistics import (
     align_records_by_example_id,
     bootstrap_ci,
     build_comparison_row,
+    holm_bonferroni,
+    mcnemar_exact,
     paired_bootstrap,
     paired_random_sign_test,
     paired_standardized_effect_size,
@@ -94,3 +96,38 @@ def test_zero_variance_zero_effect_is_safe() -> None:
     records = _records([1.0, 1.0, 1.0])
 
     assert paired_standardized_effect_size(records, records, _score) == 0.0
+
+
+def test_exact_mcnemar_reports_known_discordant_counts() -> None:
+    records_a = _records([1.0, 1.0, 1.0, 0.0, 0.0])
+    records_b = _records([0.0, 0.0, 1.0, 1.0, 0.0])
+
+    result = mcnemar_exact(records_a, records_b, _score)
+
+    assert result["a_correct_b_wrong"] == 2
+    assert result["a_wrong_b_correct"] == 1
+    assert result["discordant"] == 3
+    assert result["p_value"] == 1.0
+
+
+def test_exact_mcnemar_detects_one_sided_discordance() -> None:
+    result = mcnemar_exact(_records([1.0] * 10), _records([0.0] * 10), _score)
+
+    assert result["a_correct_b_wrong"] == 10
+    assert result["a_wrong_b_correct"] == 0
+    assert result["p_value"] == pytest.approx(2 / 1024)
+
+
+def test_holm_bonferroni_preserves_order_and_monotonicity() -> None:
+    adjusted = holm_bonferroni([0.04, 0.01, 0.03])
+
+    assert adjusted == pytest.approx([0.06, 0.03, 0.06])
+
+
+def test_exact_random_sign_test_detects_strong_paired_improvement() -> None:
+    records_a = _records([1.0] * 12)
+    records_b = _records([0.0] * 12)
+
+    p_value = paired_random_sign_test(records_a, records_b, _score, permutations=100, seed=17)
+
+    assert p_value < 0.01

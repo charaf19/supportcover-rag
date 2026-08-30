@@ -411,18 +411,45 @@ The budget command surface exists, but frozen `null` fields must be resolved bef
 
 ## Statistics
 
-- Status: BLOCKED as an artifact-producing command.
+- Status: INFRASTRUCTURE READY; SCIENTIFIC EXECUTION BLOCKED UNTIL PHASE 3 FREEZE.
 - Working directory: repository root.
-- Inputs when implemented: aligned per-example prediction JSONL files and resolved configs for every compared method.
-- Expected outputs: `outputs/final/main_results.csv` and `outputs/final/main_statistics.csv`.
-- Cost: moderate CPU cost; no model generation.
-- Phase availability: implementation in Phase 4, execution after Phase 5 predictions.
+- Inputs after the gate opens: a completed Phase-3 freeze manifest plus run directories containing `predictions.jsonl`, `metrics.json`, and `config.resolved.yaml` for every paired method.
+- Expected outputs: `outputs/statistics/method_summary.csv`, `outputs/statistics/paired_comparisons.csv`, and `outputs/statistics/statistics_manifest.json`.
+- Cost: moderate CPU-only cost; no model loading or generation.
+- Phase availability: synthetic/unit verification now; scientific execution only after the Phase-3 method freeze and the relevant complete prediction population exist.
 
-The library implementation in `supportcover_rag.statistics` is tested, but there is no CLI that reads prediction artifacts and writes the standard result files. The only currently verified statistics command is its unit test:
+Focused Phase-4 infrastructure tests (safe now):
 
 ```powershell
-python -m pytest tests/test_statistics.py -q
+.\.venv\Scripts\python.exe -m pytest tests/test_statistics.py tests/test_statistics_artifacts.py -q
 ```
+
+The artifact tests are the canonical tiny synthetic smoke: they exercise strict pairing, deterministic bootstrap/randomization, exact McNemar, Holm correction, CSV schemas, and manifest provenance without reading scientific predictions.
+
+### Future development paired analysis — BLOCKED UNTIL PHASE 3 FREEZE
+
+Copy the plan template, replace every `REPLACE_WITH_...` run/config identifier with completed development runs from one explicitly defined comparison family, and record the frozen code revision. Do not execute this while Phase 3 is pending.
+
+```powershell
+Copy-Item configs/statistics_plan.template.json outputs/development/phase3/statistics_plan.json
+$CodeRevision = git rev-parse HEAD
+# Edit outputs/development/phase3/statistics_plan.json and set code_revision to $CodeRevision.
+.\.venv\Scripts\python.exe -m supportcover_rag run-statistics --plan outputs/development/phase3/statistics_plan.json --output-dir outputs/statistics/development
+```
+
+The CLI refuses a missing Phase-3 freeze manifest, incomplete runs, split/role/protocol mismatches, duplicate or missing IDs, non-finite metrics, and populations other than the plan's exact count.
+
+### Future final paired analysis — BLOCKED UNTIL PHASE 3 FREEZE AND COMPLETE FINAL PREDICTIONS
+
+Create a separate plan for the preregistered final comparison family. Set its split, role, full final count, frozen final split SHA, source run directories, and code revision. Never mix development and final runs in one plan.
+
+```powershell
+Copy-Item configs/statistics_plan.template.json outputs/statistics/final_statistics_plan.json
+# Edit final_statistics_plan.json: role=final, split=val, N=7405, frozen final SHA, and final run directories.
+.\.venv\Scripts\python.exe -m supportcover_rag run-statistics --plan outputs/statistics/final_statistics_plan.json --output-dir outputs/statistics/final
+```
+
+Raw statistical computation remains under `outputs/statistics/`. Publication curation into `paper_results/02_main/main_statistics.csv` is deferred until real final outputs exist; `paper_artifacts.py` is not part of this Phase-4 preparation.
 
 ## Systems benchmarking
 

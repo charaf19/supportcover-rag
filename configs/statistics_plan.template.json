@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "project_root": ".",
+  "phase3_freeze_manifest": "configs/frozen/final_manifest.json",
+  "dataset": "hotpot_qa_distractor",
+  "split": "train",
+  "role": "development",
+  "split_sha256": "0e02afdcdff360d26725abe9c197a457dcbe76c92aa54338cdc146806b9ed7c6",
+  "num_examples": 2000,
+  "comparison_family": "phase3_development_confirmation",
+  "metrics": [
+    "answer_em",
+    "answer_f1",
+    "support_f1",
+    "support_recall",
+    "coverage_at_budget"
+  ],
+  "bootstrap_replicates": 10000,
+  "permutation_replicates": 10000,
+  "confidence_level": 0.95,
+  "seed": 42,
+  "holm_bonferroni": true,
+  "code_revision": null,
+  "reference": {
+    "run_dir": "outputs/development/phase3/runs/REPLACE_WITH_FROZEN_REFERENCE_RUN",
+    "method": "supportcover",
+    "config_id": "REPLACE_WITH_FROZEN_REFERENCE_CONFIG_ID"
+  },
+  "comparisons": [
+    {
+      "run_dir": "outputs/development/phase3/runs/REPLACE_WITH_COMPARISON_RUN",
+      "method": "REPLACE_WITH_COMPARISON_METHOD",
+      "config_id": "REPLACE_WITH_COMPARISON_CONFIG_ID"
+    }
+  ]
+}

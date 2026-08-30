@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Mapping, Sequence
+from fractions import Fraction
 from typing import Any
 
 import numpy as np
@@ -9,6 +10,11 @@ import numpy as np
 
 PredictionRecordLike = Mapping[str, Any]
 MetricExtractor = Callable[[PredictionRecordLike], float]
+DEFAULT_BOOTSTRAP_REPLICATES = 10_000
+DEFAULT_PERMUTATION_REPLICATES = 10_000
+DEFAULT_STATISTICS_SEED = 42
+DEFAULT_CONFIDENCE = 0.95
+_RESAMPLING_BATCH_SIZE = 256
 
 
 def _index_records(
@@ -57,6 +63,37 @@ def _metric_values(records: Sequence[PredictionRecordLike], extractor: MetricExt
     return values
 
 
+def paired_metric_values(
+    records_a: Sequence[PredictionRecordLike],
+    records_b: Sequence[PredictionRecordLike],
+    metric_extractor: MetricExtractor,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return finite metric arrays after strict example-ID pairing."""
+    aligned = align_records_by_example_id(records_a, records_b)
+    if not aligned:
+        raise ValueError("At least one paired prediction is required.")
+    values_a = np.asarray([float(metric_extractor(record_a)) for record_a, _ in aligned], dtype=float)
+    values_b = np.asarray([float(metric_extractor(record_b)) for _, record_b in aligned], dtype=float)
+    if not np.all(np.isfinite(values_a)) or not np.all(np.isfinite(values_b)):
+        raise ValueError("Metric values must be finite.")
+    return values_a, values_b
+
+
+def _resampled_means(
+    values: np.ndarray,
+    *,
+    resamples: int,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Bootstrap scalar means in bounded vectorized batches."""
+    sampled_means = np.empty(resamples, dtype=float)
+    for start in range(0, resamples, _RESAMPLING_BATCH_SIZE):
+        stop = min(start + _RESAMPLING_BATCH_SIZE, resamples)
+        sampled_indices = rng.integers(0, len(values), size=(stop - start, len(values)))
+        sampled_means[start:stop] = np.mean(values[sampled_indices], axis=1)
+    return sampled_means
+
+
 def _confidence_fraction(confidence: float) -> float:
     value = confidence / 100.0 if confidence > 1.0 else confidence
     if not 0.0 < value < 1.0:
@@ -83,19 +120,16 @@ def bootstrap_ci(
     records: Sequence[PredictionRecordLike],
     metric_extractor: MetricExtractor,
     *,
-    resamples: int = 10_000,
-    confidence: float = 0.95,
-    seed: int = 42,
+    resamples: int = DEFAULT_BOOTSTRAP_REPLICATES,
+    confidence: float = DEFAULT_CONFIDENCE,
+    seed: int = DEFAULT_STATISTICS_SEED,
 ) -> tuple[float, float]:
     if resamples <= 0:
         raise ValueError("resamples must be positive.")
     _confidence_fraction(confidence)
     values = _metric_values(records, metric_extractor)
     rng = np.random.default_rng(seed)
-    sampled_means = np.empty(resamples, dtype=float)
-    for index in range(resamples):
-        sampled_indices = rng.integers(0, len(values), size=len(values))
-        sampled_means[index] = float(np.mean(values[sampled_indices]))
+    sampled_means = _resampled_means(values, resamples=resamples, rng=rng)
     return percentile_confidence_interval(sampled_means, confidence)
 
 
@@ -104,29 +138,32 @@ def paired_bootstrap(
     records_b: Sequence[PredictionRecordLike],
     metric_extractor: MetricExtractor,
     *,
-    resamples: int = 10_000,
-    confidence: float = 0.95,
-    seed: int = 42,
+    resamples: int = DEFAULT_BOOTSTRAP_REPLICATES,
+    confidence: float = DEFAULT_CONFIDENCE,
+    seed: int = DEFAULT_STATISTICS_SEED,
 ) -> tuple[float, float]:
     if resamples <= 0:
         raise ValueError("resamples must be positive.")
     _confidence_fraction(confidence)
-    aligned = align_records_by_example_id(records_a, records_b)
-    differences = np.asarray(
-        [float(metric_extractor(record_a)) - float(metric_extractor(record_b)) for record_a, record_b in aligned],
-        dtype=float,
-    )
-    if not len(differences):
-        raise ValueError("At least one paired prediction is required.")
-    if not np.all(np.isfinite(differences)):
-        raise ValueError("Paired metric differences must be finite.")
+    values_a, values_b = paired_metric_values(records_a, records_b, metric_extractor)
+    differences = values_a - values_b
 
     rng = np.random.default_rng(seed)
-    sampled_means = np.empty(resamples, dtype=float)
-    for index in range(resamples):
-        sampled_indices = rng.integers(0, len(differences), size=len(differences))
-        sampled_means[index] = float(np.mean(differences[sampled_indices]))
+    sampled_means = _resampled_means(differences, resamples=resamples, rng=rng)
     return percentile_confidence_interval(sampled_means, confidence)
+
+
+def _exact_random_sign_p_value(differences: np.ndarray, observed: float) -> float:
+    total = 1 << len(differences)
+    at_least_as_extreme = 0
+    bit_positions = np.arange(len(differences), dtype=np.uint64)
+    for start in range(0, total, _RESAMPLING_BATCH_SIZE):
+        stop = min(start + _RESAMPLING_BATCH_SIZE, total)
+        combinations = np.arange(start, stop, dtype=np.uint64)[:, None]
+        signs = (((combinations >> bit_positions) & 1).astype(float) * 2.0) - 1.0
+        permuted = np.abs(np.mean(signs * differences, axis=1))
+        at_least_as_extreme += int(np.count_nonzero(permuted >= observed - 1e-15))
+    return at_least_as_extreme / total
 
 
 def paired_random_sign_test(
@@ -134,29 +171,83 @@ def paired_random_sign_test(
     records_b: Sequence[PredictionRecordLike],
     metric_extractor: MetricExtractor,
     *,
-    permutations: int = 10_000,
-    seed: int = 42,
+    permutations: int = DEFAULT_PERMUTATION_REPLICATES,
+    seed: int = DEFAULT_STATISTICS_SEED,
+    exact_threshold: int = 20,
 ) -> float:
     if permutations <= 0:
         raise ValueError("permutations must be positive.")
-    aligned = align_records_by_example_id(records_a, records_b)
-    differences = np.asarray(
-        [float(metric_extractor(record_a)) - float(metric_extractor(record_b)) for record_a, record_b in aligned],
-        dtype=float,
-    )
-    if not len(differences):
-        raise ValueError("At least one paired prediction is required.")
-    if not np.all(np.isfinite(differences)):
-        raise ValueError("Paired metric differences must be finite.")
+    values_a, values_b = paired_metric_values(records_a, records_b, metric_extractor)
+    differences = values_a - values_b
 
     observed = abs(float(np.mean(differences)))
+    if len(differences) <= exact_threshold:
+        return _exact_random_sign_p_value(differences, observed)
+
     rng = np.random.default_rng(seed)
     at_least_as_extreme = 0
-    for _ in range(permutations):
-        signs = rng.choice(np.asarray([-1.0, 1.0]), size=len(differences))
-        if abs(float(np.mean(differences * signs))) >= observed:
-            at_least_as_extreme += 1
+    for start in range(0, permutations, _RESAMPLING_BATCH_SIZE):
+        stop = min(start + _RESAMPLING_BATCH_SIZE, permutations)
+        signs = rng.integers(0, 2, size=(stop - start, len(differences)), dtype=np.int8)
+        signs = (signs.astype(float) * 2.0) - 1.0
+        permuted = np.abs(np.mean(signs * differences, axis=1))
+        at_least_as_extreme += int(np.count_nonzero(permuted >= observed - 1e-15))
     return (at_least_as_extreme + 1) / (permutations + 1)
+
+
+def mcnemar_exact(
+    records_a: Sequence[PredictionRecordLike],
+    records_b: Sequence[PredictionRecordLike],
+    metric_extractor: MetricExtractor,
+) -> dict[str, float | int]:
+    """Exact two-sided McNemar test for paired binary outcomes."""
+    values_a, values_b = paired_metric_values(records_a, records_b, metric_extractor)
+    if not np.all(np.isin(values_a, (0.0, 1.0))) or not np.all(np.isin(values_b, (0.0, 1.0))):
+        raise ValueError("McNemar exact test requires binary metric values encoded as 0 or 1.")
+    a_correct_b_wrong = int(np.count_nonzero((values_a == 1.0) & (values_b == 0.0)))
+    a_wrong_b_correct = int(np.count_nonzero((values_a == 0.0) & (values_b == 1.0)))
+    discordant = a_correct_b_wrong + a_wrong_b_correct
+    if discordant == 0:
+        p_value = 1.0
+    else:
+        lower = min(a_correct_b_wrong, a_wrong_b_correct)
+        lower_tail = Fraction(
+            sum(math.comb(discordant, index) for index in range(lower + 1)),
+            2**discordant,
+        )
+        p_value = min(1.0, float(2 * lower_tail))
+    return {
+        "a_correct_b_wrong": a_correct_b_wrong,
+        "a_wrong_b_correct": a_wrong_b_correct,
+        "discordant": discordant,
+        "p_value": float(p_value),
+    }
+
+
+def holm_bonferroni(p_values: Sequence[float]) -> list[float]:
+    """Return Holm-adjusted p-values in the caller's original order."""
+    values = np.asarray(p_values, dtype=float)
+    if not len(values):
+        return []
+    if not np.all(np.isfinite(values)) or np.any(values < 0.0) or np.any(values > 1.0):
+        raise ValueError("p-values must be finite and between 0 and 1.")
+    order = np.argsort(values, kind="stable")
+    adjusted = np.empty(len(values), dtype=float)
+    running_max = 0.0
+    for rank, original_index in enumerate(order):
+        candidate = min(1.0, float((len(values) - rank) * values[original_index]))
+        running_max = max(running_max, candidate)
+        adjusted[original_index] = running_max
+    return [float(value) for value in adjusted]
+
+
+def relative_delta(reference_mean: float, comparison_mean: float) -> float | None:
+    """Return comparison-minus-reference change relative to the reference mean."""
+    if not math.isfinite(reference_mean) or not math.isfinite(comparison_mean):
+        raise ValueError("Means must be finite.")
+    if reference_mean == 0.0:
+        return None
+    return (comparison_mean - reference_mean) / abs(reference_mean)
 
 
 def paired_standardized_effect_size(
@@ -164,15 +255,8 @@ def paired_standardized_effect_size(
     records_b: Sequence[PredictionRecordLike],
     metric_extractor: MetricExtractor,
 ) -> float:
-    aligned = align_records_by_example_id(records_a, records_b)
-    differences = np.asarray(
-        [float(metric_extractor(record_a)) - float(metric_extractor(record_b)) for record_a, record_b in aligned],
-        dtype=float,
-    )
-    if not len(differences):
-        raise ValueError("At least one paired prediction is required.")
-    if not np.all(np.isfinite(differences)):
-        raise ValueError("Paired metric differences must be finite.")
+    values_a, values_b = paired_metric_values(records_a, records_b, metric_extractor)
+    differences = values_a - values_b
 
     mean_difference = float(np.mean(differences))
     if len(differences) < 2:
@@ -191,18 +275,12 @@ def build_comparison_row(
     records_a: Sequence[PredictionRecordLike],
     records_b: Sequence[PredictionRecordLike],
     metric_extractor: MetricExtractor,
-    resamples: int = 10_000,
-    confidence: float = 0.95,
-    permutations: int = 10_000,
-    seed: int = 42,
+    resamples: int = DEFAULT_BOOTSTRAP_REPLICATES,
+    confidence: float = DEFAULT_CONFIDENCE,
+    permutations: int = DEFAULT_PERMUTATION_REPLICATES,
+    seed: int = DEFAULT_STATISTICS_SEED,
 ) -> dict[str, float | int | str]:
-    aligned = align_records_by_example_id(records_a, records_b)
-    values_a = np.asarray([float(metric_extractor(record_a)) for record_a, _ in aligned], dtype=float)
-    values_b = np.asarray([float(metric_extractor(record_b)) for _, record_b in aligned], dtype=float)
-    if not len(aligned):
-        raise ValueError("At least one paired prediction is required.")
-    if not np.all(np.isfinite(values_a)) or not np.all(np.isfinite(values_b)):
-        raise ValueError("Metric values must be finite.")
+    values_a, values_b = paired_metric_values(records_a, records_b, metric_extractor)
 
     mean_a = float(np.mean(values_a))
     mean_b = float(np.mean(values_b))
@@ -231,5 +309,5 @@ def build_comparison_row(
             seed=seed,
         ),
         "effect_size": paired_standardized_effect_size(records_a, records_b, metric_extractor),
-        "n": len(aligned),
+        "n": len(values_a),
     }

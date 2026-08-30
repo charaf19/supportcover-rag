@@ -7,8 +7,10 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from supportcover_rag.config import AppConfig
-from supportcover_rag.io_utils import append_csv_row, ensure_dir, read_csv_rows, write_json, write_yaml
+from supportcover_rag.io_utils import append_csv_row, ensure_dir, read_csv_rows, write_csv, write_json, write_yaml
 
 
 class ExperimentFamily(str, Enum):
@@ -223,8 +225,6 @@ class ExperimentOutputManager:
         self.ensure_layout()
 
         resolved_id = validate_experiment_id(experiment_id, family) if experiment_id is not None else self.next_id(family)
-        if self.experiment_id_exists(resolved_id):
-            raise ValueError(f"Experiment id '{resolved_id}' is already in use.")
 
         model_alias = resolve_model_alias(config.generation.model_name_or_path)
         split_alias = resolve_split_alias(split_name)
@@ -239,7 +239,27 @@ class ExperimentOutputManager:
         )
         output_dir = self.output_root / family.value / folder_name
         if output_dir.exists():
-            raise FileExistsError(f"{output_dir} already exists.")
+            if not config.runtime.resume:
+                raise FileExistsError(f"{output_dir} already exists.")
+            snapshot_path = output_dir / "config.resolved.yaml"
+            if not snapshot_path.is_file():
+                raise FileNotFoundError(f"Cannot resume without the resolved config snapshot: {snapshot_path}")
+            with snapshot_path.open("r", encoding="utf-8") as handle:
+                snapshot = yaml.safe_load(handle) or {}
+            existing_run = snapshot.pop("run", None)
+            if snapshot != asdict(config):
+                raise ValueError(f"Cannot resume {resolved_id}: resolved configuration has changed.")
+            if not isinstance(existing_run, dict) or existing_run.get("experiment_id") != resolved_id:
+                raise ValueError(f"Cannot resume {resolved_id}: run metadata is missing or inconsistent.")
+            timestamp = str(existing_run.get("timestamp") or datetime.now(timezone.utc).isoformat())
+            notes = str(existing_run.get("notes") or notes).strip()
+            config_sha256 = existing_run.get("config_sha256") or config_sha256
+            code_revision = existing_run.get("code_revision") or code_revision
+            split_sha256 = existing_run.get("split_sha256") or split_sha256
+        else:
+            if self.experiment_id_exists(resolved_id):
+                raise ValueError(f"Experiment id '{resolved_id}' is already in use.")
+            timestamp = datetime.now(timezone.utc).isoformat()
 
         return ExperimentContext(
             experiment_id=resolved_id,
@@ -252,7 +272,7 @@ class ExperimentOutputManager:
             retrieval_depth=retrieval_depth,
             variant=variant,
             notes=notes.strip(),
-            timestamp=datetime.now(timezone.utc).isoformat(),
+            timestamp=timestamp,
             output_dir=output_dir,
             config_sha256=config_sha256,
             code_revision=code_revision,
@@ -281,7 +301,17 @@ class ExperimentOutputManager:
         write_yaml(path, payload)
 
     def append_registry_row(self, row: dict[str, Any]) -> None:
-        append_csv_row(self.registry_path, row, REGISTRY_FIELDNAMES)
+        rows = read_csv_rows(self.registry_path)
+        matching_indexes = [
+            index for index, existing in enumerate(rows) if existing.get("experiment_id") == row.get("experiment_id")
+        ]
+        if len(matching_indexes) > 1:
+            raise ValueError(f"Registry contains duplicate experiment id: {row.get('experiment_id')}")
+        if matching_indexes:
+            rows[matching_indexes[0]] = {field: row.get(field, "") for field in REGISTRY_FIELDNAMES}
+            write_csv(self.registry_path, rows)
+        else:
+            append_csv_row(self.registry_path, row, REGISTRY_FIELDNAMES)
         write_json(self.latest_path, row)
 
     def _existing_id_numbers(self, prefix: str) -> list[int]:
